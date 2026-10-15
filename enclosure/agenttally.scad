@@ -16,7 +16,7 @@
 // display towards +z, components on the back towards -z.
 
 /* [Render] */
-part = "assembly"; // [assembly, section, front, back, stand, plate, print_all]
+part = "assembly"; // [assembly, body, section, light_section, front, back, stand, plate, light_pipe, print_all]
 board = "cyd28";   // [cyd28, cyd35]
 show_board = true;
 
@@ -25,6 +25,14 @@ tilt = 15;          // degrees the screen leans back
 plug_room = 34;     // straight room below the board for the USB plug + bend (use ~16 with a 90-degree cable)
 foot_depth = 80;    // front-to-back footprint of the foot
 socket_depth = 12;  // how deep the body sits in the socket
+
+/* [Status light] */
+// Light pipe that carries the RGB LED on the back of the board to a light bar
+// on the right edge of the bezel. Print it in clear PETG or white PLA.
+light_pipe = true;
+led_xy = [11.6, 54.8];  // LED centre in board coordinates (front view, USB down), measured on a dual-USB board
+led_h = 1.6;            // LED height above the PCB back
+bar_len = 12;           // visible light bar length on the bezel
 
 /* [Fit] */
 clear = 0.4;        // gap around the PCB inside the shell
@@ -95,6 +103,71 @@ module sd_cut() {
     translate([out_x0 - 1, sd[0], -pcb_t - 3.2]) cube([wall + clear + 1.5, sd[1] - sd[0], 4.4]);
 }
 
+// ---------------------------------------------------------------- status light pipe
+// A clear bar with two 45-degree total-internal-reflection faces:
+//   LED (facing backwards) -> mirror 1 turns the light sideways along the board ->
+//   mirror 2 at the right edge turns it forward -> up a groove in the side wall,
+//   past the PCB and the display -> out through a slot in the bezel.
+has_lp = light_pipe && board == "cyd28";
+lp_t = 2.0;                              // bar thickness (z) = width of the turn
+lp_w = 5.0;                              // bar width (y), generous for LED position error
+lp_z0 = -pcb_t - led_h - 0.6;            // face towards the PCB, just behind the LED
+lp_z1 = lp_z0 - lp_t;
+lp_x1 = in_x1 + wall - 0.6;              // outer face of the vertical leg (0.6 mm wall skin left)
+lp_x0 = lp_x1 - lp_t;                    // inner face at the turn (behind the PCB)
+lp_xe = pcb_w + 0.1;                     // inner face of the leg beside the PCB / display
+lp_tip = 0.25;                           // shoulder on each side of the tip that stops the pipe flush
+ly0 = led_xy[1] - lp_w / 2;
+ly1 = ly0 + bar_len;
+
+module light_pipe_body() {
+  difference() {
+    union() {
+      // horizontal run behind the PCB
+      translate([led_xy[0] - lp_t / 2, ly0, lp_z1]) cube([lp_x1 - led_xy[0] + lp_t / 2, lp_w, lp_t]);
+      // the turn, as wide as the bar is thick
+      translate([lp_x0, ly0, lp_z1]) cube([lp_t, lp_w, lp_t]);
+      // vertical leg, fanning out to the bar length
+      hull() {
+        translate([lp_xe, ly0, lp_z0 - eps]) cube([lp_x1 - lp_xe, lp_w, eps]);
+        translate([lp_xe, ly0, z_front_in - eps]) cube([lp_x1 - lp_xe, bar_len, eps]);
+      }
+      // tip through the bezel plate, flush with the front
+      translate([lp_xe + lp_tip, ly0, z_front_in - eps]) cube([lp_x1 - lp_xe - 2 * lp_tip, bar_len, front_t + eps]);
+    }
+    // mirror 1 over the LED: remove the half-space x + z < c (far-left corner)
+    xz_cut(led_xy[0] - lp_t / 2, lp_z0, [[-30, 30], [30, -30], [-30, -30]]);
+    // mirror 2 at the edge: remove the half-space x - z > c (far-right corner)
+    xz_cut(lp_x1, lp_z0, [[-30, -30], [30, 30], [30, -30]]);
+  }
+}
+
+// extrude a polygon given in (x, z) along y, placed at (x0, z0)
+module xz_cut(x0, z0, pts) {
+  translate([x0, 0, z0]) rotate([90, 0, 0]) linear_extrude(400, center = true) polygon(pts);
+}
+
+// clearance cut in the shell for the pipe (groove in the right wall + slot in the bezel)
+module light_pipe_cut() {
+  c = 0.15;
+  // horizontal pocket so the back cover lip/bosses never touch the bar
+  translate([lp_x0 - c, ly0 - c, lp_z1 - c]) cube([lp_x1 - lp_x0 + 2 * c, lp_w + 2 * c, lp_z0 - lp_z1 + 2 * c]);
+  hull() {
+    translate([lp_xe - c, ly0 - c, lp_z1 - c]) cube([lp_x1 - lp_xe + 2 * c, lp_w + 2 * c, eps]);
+    translate([lp_xe - c, ly0 - c, lp_z0 - c]) cube([lp_x1 - lp_xe + 2 * c, lp_w + 2 * c, eps]);
+    translate([lp_xe - c, ly0 - c, z_front_in - eps]) cube([lp_x1 - lp_xe + 2 * c, bar_len + 2 * c, eps]);
+  }
+  translate([lp_xe + lp_tip - c, ly0 - c, z_front_in - 1]) cube([lp_x1 - lp_xe - 2 * lp_tip + 2 * c, bar_len + 2 * c, front_t + 2]);
+}
+
+// two fingers on the back cover hold the bar against the turn
+module light_pipe_fingers() {
+  // between the vent slots (vents at 9 + i * (pcb_w - 18) / 6)
+  step = (pcb_w - 18) / 6;
+  for (x = [9 + 2.5 * step, 9 + 5.5 * step])
+    translate([x, led_xy[1], z_back_in - eps]) cylinder(d = 3, h = lp_z1 - z_back_in + eps);
+}
+
 // ---------------------------------------------------------------- front bezel
 module front() {
   win = [aa[0] - 0.6, aa[1] - 0.6, aa[2] + 1.2, aa[3] + 1.2];
@@ -118,6 +191,7 @@ module front() {
     for (h = holes) translate([h[0], h[1], -eps]) cylinder(d = 2.6, h = z_front - 0.8);
     usb_cut();
     sd_cut();
+    if (has_lp) light_pipe_cut();
     // lip recess for the rear cover
     difference() {
       rrect(in_x0 - 0.9, in_y0 - 0.9, in_x1 + 0.9, in_y1 + 0.9, corner_r - wall + 0.9, 1.6, z_split - eps);
@@ -141,6 +215,7 @@ module back() {
       }
       // screw bosses up to the PCB back
       for (h = holes) translate([h[0], h[1], z_back_in - eps]) cylinder(d = 5.6, h = back_clear + eps);
+      if (has_lp) light_pipe_fingers();
     }
     for (h = holes) {
       translate([h[0], h[1], z_back - eps]) cylinder(d = 3.4, h = body_d);
@@ -150,6 +225,7 @@ module back() {
     usb_cut();
     sd_cut();
     vents();
+    if (has_lp) light_pipe_cut();
   }
 }
 
@@ -258,20 +334,33 @@ module board_model() {
   color([0.15, 0.15, 0.18]) translate([0, 8.4, 0]) cube([pcb_w, 69.2, glass_z]);
   color([0.25, 0.35, 0.55]) translate([aa[0], aa[1], glass_z - 0.05]) cube([aa[2], aa[3], 0.1]);
   color("silver") translate([usb[0] - 4.5, -0.6, -pcb_t - 3.4]) cube([9, 7.5, 3.4]);
-  color([0.2, 0.2, 0.2]) translate([10, 30, -pcb_t - 3.2]) cube([18, 25.5, 3.2]);
+  color([0.2, 0.2, 0.2]) translate([16, 60, -pcb_t - 3.2]) cube([18, 20, 3.2]);  // ESP32 module
+  color("red") translate([led_xy[0], led_xy[1], -pcb_t - led_h / 2]) cube([2.5, 2.5, led_h], center = true);
 }
 
 // ---------------------------------------------------------------- output
 module body_assembly(explode = 0) {
   color([0.93, 0.92, 0.89]) translate([0, 0, explode]) front();
   color([0.82, 0.81, 0.78]) translate([0, 0, -explode]) back();
+  if (has_lp) color([1, 0.45, 0.1, 0.85]) light_pipe_body();
   if (show_board) board_model();
 }
+
 
 if (part == "front") rotate([180, 0, 0]) translate([0, 0, -z_front]) front();
 else if (part == "back") translate([0, 0, -z_back]) back();
 else if (part == "stand") stand();
 else if (part == "plate") plate();
+else if (part == "body") body_assembly();
+// printed lying on its side (y = ly0 face down): the fan rises from the bed, no supports
+else if (part == "light_pipe") rotate([90, 0, 0]) translate([0, -ly0, 0]) light_pipe_body();
+else if (part == "light_section") {
+  // cut across the board at the LED height, seen from the USB end
+  intersection() {
+    body_assembly();
+    translate([-20, led_xy[1] - 0.5, -50]) cube([100, 100, 100]);
+  }
+}
 else if (part == "print_all") {
   rotate([180, 0, 0]) translate([0, 0, -z_front]) front();
   translate([body_w + 8, 0, -z_back]) back();

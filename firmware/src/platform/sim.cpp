@@ -88,7 +88,7 @@ class SimHal : public Hal {
   void led(uint8_t r, uint8_t g, uint8_t b) override {
     bool on = r | g | b, was = lr | lg | lb;
     if (on != was || (on && ((r > 0) != (lr > 0) || (g > 0) != (lg > 0)))) {
-      printf("[sim] LED %s\n", !on ? "off" : r ? "red (pulsing)" : g ? "green" : "blue");
+      printf("[sim] LED %s\n", !on ? "off" : (r && g) ? "amber" : r ? "red" : g ? "green" : "blue");
     }
     lr = r; lg = g; lb = b;
   }

@@ -54,5 +54,6 @@ Some USB-C-only boards use an ILI9341 with a custom init instead (RZ `esp32-2432
 | USB | Short edge, roughly centred; the wide (FPC) bezel side faces the USB end | drawing + photos |
 | SD slot | Left long edge (seen from the front, USB down), 31–44 mm from the USB end, sticks out ~1 mm | drawing, *estimate* |
 | LDR | Front, top-left corner (USB down) | drawing + photos |
+| RGB LED | Back side, 11.6 mm from the left edge and 54.8 mm from the USB edge (front view, USB down), right next to the CN1 connector | photo with a ruler, ±1.5 mm |
 
 The 3.5" preset in the enclosure (`board = "cyd35"`) uses 101.5 × 54.9 mm from [espboards](https://www.espboards.dev/esp32/cyd-esp32-3248s035/). Its holes, display offset and stack height are **estimates**, please measure before printing.

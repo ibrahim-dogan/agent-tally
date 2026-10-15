@@ -20,8 +20,12 @@ if [ "$1" != "preview" ]; then
       run --export-format=binstl -o stl/agenttally-$b-$p.stl -D "part=\"$p\"" -D "board=\"$b\"" agenttally.scad
     done
   done
+  run --export-format=binstl -o stl/agenttally-cyd28-light_pipe.stl -D 'part="light_pipe"' agenttally.scad
+  for b in cyd28; do :
+  done
 fi
 run -o img/assembly.png --imgsize=1200,1500 --colorscheme=Tomorrow --camera=0,15,62,62,0,322,330 --viewall -D 'part="assembly"' agenttally.scad
 run -o img/assembly-back.png --imgsize=1200,1500 --colorscheme=Tomorrow --camera=0,15,62,58,0,150,330 --viewall -D 'part="assembly"' agenttally.scad
 run -o img/section.png --imgsize=1300,1300 --colorscheme=Tomorrow --camera=0,15,62,90,0,90,300 --projection=o --viewall -D 'part="section"' agenttally.scad
+run -o img/light-section.png --imgsize=1200,600 --colorscheme=Tomorrow --camera=30,60,-2,90,0,0,90 --projection=o -D 'part="light_section"' agenttally.scad
 run -o img/parts.png --imgsize=1800,1000 --colorscheme=Tomorrow --camera=0,0,0,55,0,25,0 --autocenter --viewall -D 'part="print_all"' agenttally.scad

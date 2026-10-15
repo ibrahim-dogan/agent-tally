@@ -185,14 +185,21 @@ bool App::animating() const {
   return false;
 }
 
+// The LED also feeds the light bar on the stand's bezel, so it shows every state:
+// needs you = red breathing, done = steady green, working = slow dim amber.
 void App::updateLed() {
   if (!cfg_.led) { hal_.led(0, 0, 0); return; }
-  int w = lastWaiting_, d = lastDone_;
-  if (w) {
-    uint8_t v = 20 + (uint8_t)(200 * pulse(1600));
+  int working = 0;
+  for (auto& s : sess_)
+    if (s.used && s.st == ST_WORKING) working++;
+  if (lastWaiting_) {
+    uint8_t v = 25 + (uint8_t)(230 * pulse(1600));
     hal_.led(v, 0, 0);
-  } else if (d) {
-    hal_.led(0, 40, 0);
+  } else if (lastDone_) {
+    hal_.led(0, 170, 0);
+  } else if (working) {
+    float k = 0.35f + 0.65f * pulse(3200);
+    hal_.led((uint8_t)(150 * k), (uint8_t)(55 * k), 0);
   } else {
     hal_.led(0, 0, 0);
   }

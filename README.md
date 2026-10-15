@@ -8,7 +8,7 @@ AgentTally turns a ~$15 ESP32 "Cheap Yellow Display" into a live monitor for eve
 
 - **Live session list.** Sessions waiting for you float to the top and pulse red. Finished turns turn green until you look at them. The rest show the tool they are running (`Edit routes.ts`, `$ npm test`, `Agent: Explore` ...).
 - **Detail view.** Tap a session to see its folder, the current step, your last prompt and the start of Claude's last reply.
-- **Status LED.** The RGB LED on the back breathes red while something needs you.
+- **Status light.** The RGB LED on the back breathes red when something needs you, glows green when a turn is done and amber while agents work. A printed light pipe brings it to a light bar on the front of the stand.
 - **USB only.** No Wi-Fi setup, no cloud. Everything stays on your machine and on the cable.
 - **Any agent.** Claude Code works out of the box through hooks. Codex CLI and anything that can run a command or send an HTTP request can report too.
 - **Runs in a simulator.** The same UI code builds as a desktop SDL app, so you can try it without hardware.
