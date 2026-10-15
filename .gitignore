@@ -1,0 +1,8 @@
+.pio/
+.vscode/
+__pycache__/
+*.pyc
+.factory-backup*.bin
+/web/firmware/
+/dist/
+.DS_Store
