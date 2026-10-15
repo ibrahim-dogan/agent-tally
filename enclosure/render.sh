@@ -17,11 +17,11 @@ mkdir -p stl img
 if [ "$1" != "preview" ]; then
   for b in cyd28 cyd35; do
     for p in front back stand plate; do
-      run -o stl/agenttally-$b-$p.stl -D "part=\"$p\"" -D "board=\"$b\"" agenttally.scad
+      run --export-format=binstl -o stl/agenttally-$b-$p.stl -D "part=\"$p\"" -D "board=\"$b\"" agenttally.scad
     done
   done
 fi
 run -o img/assembly.png --imgsize=1200,1500 --colorscheme=Tomorrow --camera=0,15,62,62,0,322,330 --viewall -D 'part="assembly"' agenttally.scad
 run -o img/assembly-back.png --imgsize=1200,1500 --colorscheme=Tomorrow --camera=0,15,62,58,0,150,330 --viewall -D 'part="assembly"' agenttally.scad
 run -o img/section.png --imgsize=1300,1300 --colorscheme=Tomorrow --camera=0,15,62,90,0,90,300 --projection=o --viewall -D 'part="section"' agenttally.scad
-run -o img/parts.png --imgsize=1800,1000 --colorscheme=Tomorrow --camera=0,0,0,45,0,20,500 --viewall -D 'part="print_all"' agenttally.scad
+run -o img/parts.png --imgsize=1800,1000 --colorscheme=Tomorrow --camera=0,0,0,55,0,25,0 --autocenter --viewall -D 'part="print_all"' agenttally.scad

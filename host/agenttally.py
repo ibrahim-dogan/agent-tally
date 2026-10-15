@@ -1081,6 +1081,9 @@ def service_install(script):
 
 
 def service_uninstall():
+    link = os.path.expanduser("~/.local/bin/agenttally")
+    if os.path.islink(link):
+        os.remove(link)
     if sys.platform == "darwin":
         plist = os.path.expanduser(f"~/Library/LaunchAgents/{LAUNCHD_LABEL}.plist")
         if os.path.exists(plist):
@@ -1101,6 +1104,20 @@ def cmd_install(a):
     target = install_dir_script()
     if me != target:
         shutil.copy2(me, target)
+    os.chmod(target, 0o755)
+    # `agenttally` on the PATH for convenience
+    bindir = os.path.expanduser("~/.local/bin")
+    try:
+        os.makedirs(bindir, exist_ok=True)
+        link = os.path.join(bindir, "agenttally")
+        if os.path.islink(link) or not os.path.exists(link):
+            if os.path.islink(link):
+                os.remove(link)
+            os.symlink(target, link)
+            on_path = bindir in os.environ.get("PATH", "").split(os.pathsep)
+            print(f"command: {link}" + ("" if on_path else f"  (add {bindir} to your PATH)"))
+    except OSError:
+        pass
     if not a.no_hooks:
         install_hooks(a.http_port)
     if not a.no_service:
