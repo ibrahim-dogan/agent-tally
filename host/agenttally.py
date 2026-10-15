@@ -223,8 +223,6 @@ class Store:
             s = self.sessions.get(sid)
             if s and not s.get("ack"):
                 s["ack"] = True
-                if s["state"] == "done":
-                    s["state"], s["since"] = "idle", time.time()
                 self._emit("upsert", dict(s))
 
     def _evict(self):
@@ -396,7 +394,11 @@ def handle_generic(ev):
         fields["name"] = ev.get("title") or os.path.basename((ev.get("cwd") or "").rstrip("/")) or rid
     if ev.get("pid"):
         fields["pid"] = int(ev["pid"])
+    if ev.get("sub") is not None:
+        fields["sub"] = int(ev["sub"])
     STORE.upsert(sid, state=state, event=ev.get("event") or state, **fields)
+    if ev.get("age"):  # backdate (demo data, replays)
+        STORE.upsert(sid, since=time.time() - float(ev["age"]))
 
 
 def handle_codex_notify(payload):
@@ -426,7 +428,7 @@ def tz_offset():
 
 
 def host_label():
-    name = socket.gethostname().split(".")[0]
+    name = os.environ.get("AGENTTALLY_NAME") or socket.gethostname().split(".")[0]
     return ascii_fold(name, 24)
 
 
@@ -450,7 +452,7 @@ class DeviceLink:
             pass
 
     def send_snapshot(self):
-        self.send({"t": "clr", "now": int(time.time())})
+        self.send({"t": "clr", "now": int(time.time()), "tz": tz_offset()})
         for s in sorted(STORE.snapshot(), key=lambda s: s["updated"]):
             self.send(wire_session(s))
 
@@ -770,7 +772,7 @@ def sweeper(stop, done_to_idle_min):
                     STORE.upsert(s["id"], state="idle", detail="Interrupted", event="interrupted")
                     continue
             if s["state"] == "done" and done_to_idle_min and now - s["since"] > done_to_idle_min * 60:
-                STORE.ack(s["id"])
+                STORE.upsert(s["id"], state="idle", ack=True)
             # Never heard of again (no pid tracking): forget after 12h.
             if now - s["updated"] > 12 * 3600 and not s.get("pid"):
                 STORE.remove(s["id"])
@@ -948,18 +950,18 @@ def cmd_device(a):
 
 
 DEMO = [
-    {"source": "claude", "id": "d1", "title": "agent-tally", "state": "waiting",
-     "detail": "Allow $ pio run -e cyd28 -t upload?", "cwd": "~/code/agent-tally",
-     "prompt": "flash the new firmware to the board"},
-    {"source": "claude", "id": "d2", "title": "vero-menu", "state": "working", "detail": "Edit OrderList.tsx",
-     "cwd": "~/code/vero-menu", "prompt": "add pagination to the orders table"},
-    {"source": "claude", "id": "d3", "title": "api-gateway", "state": "done", "detail": "Finished - your turn",
-     "cwd": "~/work/api-gateway", "prompt": "why is the retry test flaky?",
-     "reply": "The retry test was flaky because the mock clock was shared between tests. I isolated it per test and all 48 tests pass now."},
-    {"source": "codex", "id": "d4", "title": "infra-cdk", "state": "working", "detail": "$ cdk diff",
-     "cwd": "~/work/infra-cdk"},
-    {"source": "claude", "id": "d5", "title": "pandoku-vita", "state": "idle", "detail": "Waiting for your next prompt",
-     "cwd": "~/code/pandoku-vita"},
+    {"source": "claude", "id": "d1", "title": "agent-tally", "state": "waiting", "detail": "Allow $ pio run -t upload?",
+     "cwd": "~/code/agent-tally", "age": 12, "prompt": "flash the new firmware to the board"},
+    {"source": "claude", "id": "d2", "title": "web-shop", "state": "done", "detail": "All 48 tests pass.",
+     "cwd": "~/code/web-shop", "age": 95, "prompt": "why is the checkout test flaky?",
+     "reply": "The retry test shared a mock clock with the other tests, so timing leaked between them. "
+              "I gave every test its own clock and ran the suite 20 times: all 48 tests pass."},
+    {"source": "claude", "id": "d3", "title": "api-gateway", "state": "working", "detail": "Edit routes/limits.ts",
+     "cwd": "~/work/api-gateway", "prompt": "add per-key rate limiting", "sub": 2, "age": 260},
+    {"source": "codex", "id": "d4", "title": "infra", "state": "working", "detail": "$ terraform plan",
+     "cwd": "~/work/infra", "age": 540},
+    {"source": "claude", "id": "d5", "title": "café-menü", "state": "idle", "detail": "Waiting for your next prompt",
+     "cwd": "~/code/cafe-menu", "age": 2700},
 ]
 
 
@@ -1106,6 +1108,23 @@ def cmd_install(a):
     print("done. Restart running Claude Code sessions to pick up the hooks.")
 
 
+def cmd_service(a):
+    """start / stop / restart the autostart service (e.g. to free the serial port for flashing)."""
+    if sys.platform == "darwin":
+        plist = os.path.expanduser(f"~/Library/LaunchAgents/{LAUNCHD_LABEL}.plist")
+        if not os.path.exists(plist):
+            sys.exit("service not installed (run: agenttally.py install)")
+        if a.action in ("stop", "restart"):
+            subprocess.run(["launchctl", "unload", plist], capture_output=True)
+        if a.action in ("start", "restart"):
+            subprocess.run(["launchctl", "load", "-w", plist], capture_output=True)
+    elif shutil.which("systemctl"):
+        subprocess.run(["systemctl", "--user", a.action, "agent-tally.service"])
+    else:
+        sys.exit("no service manager found")
+    print(f"bridge service: {a.action}")
+
+
 def cmd_uninstall(a):
     write_settings(strip_our_hooks(load_settings()))
     print("Claude Code hooks removed")
@@ -1127,6 +1146,7 @@ def main():
     s.set_defaults(fn=cmd_serve)
 
     sub.add_parser("status", help="list sessions").set_defaults(fn=cmd_status)
+    sub.add_parser("version", help="print the version").set_defaults(fn=lambda a: print(VERSION))
 
     s = sub.add_parser("send", help="push a generic agent event")
     s.add_argument("--source", default="agent")
@@ -1159,6 +1179,10 @@ def main():
     s.set_defaults(fn=cmd_install)
 
     sub.add_parser("uninstall", help="remove hooks + autostart").set_defaults(fn=cmd_uninstall)
+
+    s = sub.add_parser("service", help="start/stop the autostart bridge (stop it before flashing)")
+    s.add_argument("action", choices=["start", "stop", "restart"])
+    s.set_defaults(fn=cmd_service)
 
     a = p.parse_args()
     a.fn(a)

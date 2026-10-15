@@ -1,0 +1,6 @@
+{
+  "name": "AgentTally (cyd32c)",
+  "version": "0.1.0",
+  "new_install_prompt_erase": true,
+  "builds": [{ "chipFamily": "ESP32", "parts": [{ "path": "../firmware/agenttally-cyd32c.bin", "offset": 0 }] }]
+}

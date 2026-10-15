@@ -81,7 +81,7 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(s["detail"], "Done.")
 
         at.STORE.ack("claude:s1")
-        self.assertEqual(self.session()["state"], "idle")
+        self.assertEqual((self.session()["state"], self.session()["ack"]), ("done", True))
 
         self.hook(hook_event_name="SessionEnd", reason="prompt_input_exit")
         self.assertIsNone(self.session())
@@ -95,10 +95,10 @@ class BridgeTest(unittest.TestCase):
         self.hook(hook_event_name="PostToolUse", tool_name="AskUserQuestion")
         self.hook(hook_event_name="Notification", notification_type="idle_prompt", message="waiting")
         self.assertEqual(self.session()["state"], "done")
-        # an idle_prompt must not wake an already acknowledged session
+        # an idle_prompt must not re-flag an already acknowledged session
         at.STORE.ack("claude:s1")
         self.hook(hook_event_name="Notification", notification_type="idle_prompt", message="waiting")
-        self.assertEqual(self.session()["state"], "idle")
+        self.assertTrue(self.session()["ack"])
 
     def test_subagent_tools_do_not_raise_questions(self):
         self.hook(hook_event_name="UserPromptSubmit", prompt="go")
@@ -144,7 +144,7 @@ class BridgeTest(unittest.TestCase):
         at.STORE.upsert("claude:pre", state="done")
         self.assertEqual(json.loads(f.readline())["st"], "done")
         c.sendall(b'{"t":"ack","id":"claude:pre"}\n')
-        self.assertEqual(json.loads(f.readline())["st"], "idle")
+        self.assertEqual(json.loads(f.readline())["ack"], 1)
         c.close()
 
     def test_interrupt_detection(self):

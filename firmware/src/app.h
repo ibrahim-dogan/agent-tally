@@ -104,6 +104,7 @@ class App {
   char host_[32] = "";
   int64_t epochAtSync_ = 0;  // host unix time (local tz applied) at syncMs_
   uint32_t syncMs_ = 0;
+  int32_t tz_ = 0;
 
   // ui state
   Screen screen_ = SCR_LIST;

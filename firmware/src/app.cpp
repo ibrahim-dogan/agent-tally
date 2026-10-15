@@ -291,8 +291,9 @@ void App::handleLine(char* line) {
   uint32_t now = hal_.ms();
   lastRx_ = now;
 
+  if (doc["tz"].is<int>()) tz_ = doc["tz"].as<int>();
   if (doc["now"].is<int64_t>()) {
-    epochAtSync_ = doc["now"].as<int64_t>() + (doc["tz"] | 0);
+    epochAtSync_ = doc["now"].as<int64_t>() + tz_;
     syncMs_ = now;
   }
 

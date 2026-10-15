@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentTally</title>
+<meta name="description" content="A tiny desk display that shows what your AI coding agents are doing: working, waiting for you, or done. Flash an ESP32 Cheap Yellow Display from the browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+<style>
+:root {
+  --bg: #0d0e12; --panel: #15171d; --card: #1a1c23; --card-hi: #232630; --line: #262a33;
+  --text: #eeece8; --muted: #9399a4; --dim: #5a5f6b;
+  --accent: #d97757; --work: #f2b33d; --wait: #ff5a5f; --done: #3fcf8e;
+  --radius: 14px;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f4f0; --panel: #ffffff; --card: #f0ede7; --card-hi: #e8e4dc; --line: #e2ddd4;
+    --text: #1d1c1a; --muted: #6b6760; --dim: #a39e95;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f6f4f0; --panel: #ffffff; --card: #f0ede7; --card-hi: #e8e4dc; --line: #e2ddd4;
+  --text: #1d1c1a; --muted: #6b6760; --dim: #a39e95;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.55 Inter, system-ui, -apple-system, Segoe UI, sans-serif;
+}
+a { color: var(--accent); }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+header.top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; font-size: 18px; color: var(--text); text-decoration: none; }
+.mark { width: 22px; height: 22px; border-radius: 50%; border: 6px solid var(--accent); }
+.top nav a { color: var(--muted); text-decoration: none; margin-left: 18px; font-size: 14px; }
+.top nav a:hover { color: var(--text); }
+
+.hero { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 40px; align-items: center; padding: 40px 0 56px; }
+.hero h1 { font-size: clamp(32px, 5vw, 50px); line-height: 1.08; letter-spacing: -0.03em; margin: 0 0 18px; }
+.hero h1 em { font-style: normal; color: var(--accent); }
+.hero p.lead { color: var(--muted); font-size: 18px; margin: 0 0 26px; max-width: 34em; }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+.pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 99px; background: var(--card); font-size: 14px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 10px; font-weight: 600; font-size: 15px; text-decoration: none; border: 0; cursor: pointer; font-family: inherit; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.ghost { background: var(--card); color: var(--text); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.device { justify-self: center; position: relative; }
+.device .frame { background: #e9e6df; border-radius: 22px; padding: 14px 13px 30px; box-shadow: 0 30px 60px -25px rgba(0,0,0,.6), inset 0 -2px 0 rgba(0,0,0,.08); transform: perspective(900px) rotateX(9deg); }
+.device img { display: block; width: 240px; height: 320px; border-radius: 4px; image-rendering: auto; background: #0d0e12; }
+.device .foot { height: 46px; margin: -6px 18px 0; background: linear-gradient(#dcd8d0, #cfcac0); border-radius: 0 0 14px 14px; clip-path: polygon(6% 0, 94% 0, 100% 100%, 0 100%); }
+.device .label { position: absolute; bottom: 14px; width: 100%; text-align: center; font-size: 10px; font-weight: 700; color: #8c877e; letter-spacing: .04em; }
+
+section { padding: 48px 0; border-top: 1px solid var(--line); }
+section h2 { font-size: 28px; letter-spacing: -0.02em; margin: 0 0 6px; display: flex; align-items: baseline; gap: 12px; }
+section h2 .n { font-family: var(--mono); font-size: 14px; color: var(--accent); font-weight: 600; }
+section .sub { color: var(--muted); margin: 0 0 26px; max-width: 46em; }
+
+.boards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.board { position: relative; background: var(--card); border: 2px solid transparent; border-radius: var(--radius); padding: 14px 16px; cursor: pointer; transition: border-color .15s; }
+.board:hover { border-color: var(--line); }
+.board input { position: absolute; opacity: 0; pointer-events: none; }
+.board:has(input:checked) { border-color: var(--accent); background: var(--card-hi); }
+.board:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.board b { display: block; font-size: 15px; }
+.board span { color: var(--muted); font-size: 13px; }
+.tag { position: absolute; top: 12px; right: 12px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; }
+.tag.ok { background: color-mix(in srgb, var(--done) 18%, transparent); color: var(--done); }
+.tag.exp { background: color-mix(in srgb, var(--work) 18%, transparent); color: var(--work); }
+
+.install-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+esp-web-install-button button[slot="activate"] { font: 600 15px Inter, sans-serif; }
+.note { color: var(--muted); font-size: 14px; }
+.callout { background: var(--card); border-radius: var(--radius); padding: 14px 16px; font-size: 14px; color: var(--muted); margin-top: 18px; }
+.callout b { color: var(--text); }
+
+.code { position: relative; background: #0a0b0e; color: #e8e6e3; border: 1px solid var(--line); border-radius: 12px; padding: 16px 52px 16px 16px; font: 14px/1.6 var(--mono); overflow-x: auto; white-space: pre; }
+.code .c { color: #6f7682; }
+.copy { position: absolute; top: 10px; right: 10px; background: #1a1c23; color: #c9c7c2; border: 1px solid #2a2d36; border-radius: 8px; padding: 5px 9px; font: 12px Inter, sans-serif; cursor: pointer; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.steps { margin: 0; padding-left: 20px; color: var(--muted); }
+.steps li { margin: 6px 0; }
+.steps b { color: var(--text); }
+
+.tools { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
+.status { background: var(--card); border-radius: var(--radius); padding: 16px; }
+.status .row { display: flex; justify-content: space-between; font-size: 14px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.status .row:last-child { border: 0; }
+.status .row span:first-child { color: var(--muted); }
+.controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.ctl { background: var(--card); border-radius: var(--radius); padding: 14px 16px; }
+.ctl label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.ctl input[type=range] { width: 100%; accent-color: var(--accent); }
+.ctl select { width: 100%; background: var(--card-hi); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; }
+.switch { display: flex; align-items: center; justify-content: space-between; font-size: 15px; padding: 3px 0; }
+.switch input { width: 40px; height: 22px; accent-color: var(--done); }
+.ctl .btn { width: 100%; justify-content: center; margin-top: 4px; }
+.log { margin-top: 12px; height: 120px; overflow: auto; background: #0a0b0e; color: #8a909b; border-radius: 10px; padding: 10px 12px; font: 12px/1.5 var(--mono); }
+[data-needs-device] { transition: opacity .2s; }
+.offline [data-needs-device] { opacity: .45; pointer-events: none; }
+
+.stand { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; }
+.stand img { width: 100%; border-radius: var(--radius); background: #f2f1ee; }
+.files { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 18px 0; }
+.files a { display: flex; justify-content: space-between; background: var(--card); padding: 10px 12px; border-radius: 10px; text-decoration: none; color: var(--text); font-size: 14px; }
+.files a span { color: var(--muted); }
+
+footer { padding: 36px 0 60px; color: var(--dim); font-size: 14px; border-top: 1px solid var(--line); }
+
+@media (max-width: 820px) {
+  .hero, .grid2, .tools, .stand { grid-template-columns: 1fr; }
+  .device { order: -1; }
+  .files { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#"><span class="mark"></span>AgentTally</a>
+    <nav><a href="#flash">Flash</a><a href="#bridge">Bridge</a><a href="#tools">Tools</a><a href="#stand">Stand</a><a href="https://github.com/ibrahim-dogan/agent-tally">GitHub</a></nav>
+  </header>
+
+  <div class="hero">
+    <div>
+      <h1>Know when your agents <em>need you.</em></h1>
+      <p class="lead">AgentTally turns a $15 ESP32 "Cheap Yellow Display" into a desk monitor for your AI coding sessions. Every Claude Code session shows up live: working, waiting for your approval, or done.</p>
+      <div class="pills">
+        <span class="pill"><i class="dot" style="background:var(--wait)"></i>Needs you</span>
+        <span class="pill"><i class="dot" style="background:var(--done)"></i>Done</span>
+        <span class="pill"><i class="dot" style="background:var(--work)"></i>Working</span>
+        <span class="pill"><i class="dot" style="background:var(--dim)"></i>Idle</span>
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="#flash">Flash your display</a>
+        <a class="btn ghost" href="https://github.com/ibrahim-dogan/agent-tally">Source on GitHub</a>
+      </div>
+    </div>
+    <div class="device" aria-hidden="true">
+      <div class="frame"><img src="img/screen-list.png" alt="" width="240" height="320"></div>
+      <div class="foot"></div>
+      <div class="label">agent tally</div>
+    </div>
+  </div>
+
+  <section id="flash">
+    <h2><span class="n">01</span>Flash the firmware</h2>
+    <p class="sub">Plug the board in with a USB data cable, pick your model and press Install. Works in Chrome or Edge on desktop.</p>
+    <div class="boards" id="boards">
+      <label class="board"><input type="radio" name="board" value="cyd28" checked><b>2.8" ESP32-2432S028R</b><span>Micro-USB and dual USB (micro + USB-C). Panel detected automatically.</span><i class="tag ok">tested</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd35r"><b>3.5" ESP32-3248S035R</b><span>ST7796, resistive touch</span><i class="tag exp">experimental</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd35c"><b>3.5" ESP32-3248S035C</b><span>ST7796, capacitive GT911</span><i class="tag exp">experimental</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd32r"><b>3.2" ESP32-2432S032R</b><span>ST7789, resistive touch</span><i class="tag exp">experimental</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd32c"><b>3.2" ESP32-2432S032C</b><span>ST7789, capacitive GT911</span><i class="tag exp">experimental</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd24r"><b>2.4" ESP32-2432S024R</b><span>ILI9341, resistive touch</span><i class="tag exp">experimental</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd24c"><b>2.4" ESP32-2432S024C</b><span>ILI9341, capacitive CST820</span><i class="tag exp">experimental</i></label>
+    </div>
+    <div class="install-row">
+      <esp-web-install-button id="installer" manifest="manifest/cyd28.json">
+        <button slot="activate" class="btn primary">Install AgentTally</button>
+        <span slot="unsupported" class="note">Your browser can't talk to USB devices. Use Chrome or Edge on a desktop.</span>
+        <span slot="not-allowed" class="note">The installer needs a secure (https) page.</span>
+      </esp-web-install-button>
+      <span class="note" id="fwinfo">Firmware v0.1.0</span>
+    </div>
+    <div class="callout"><b>Port not showing up?</b> Most boards use a CH340 USB-serial chip: macOS and Linux include a driver, Windows may need the <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html">WCH CH340 driver</a>. On dual-USB boards use a USB-A to USB-C cable: the board's USB-C port lacks the resistors that C-to-C cables need.</div>
+  </section>
+
+  <section id="bridge">
+    <h2><span class="n">02</span>Install the bridge</h2>
+    <p class="sub">A small Python script (standard library only) receives Claude Code hook events and mirrors your sessions to the display over the same USB cable. It also autostarts at login.</p>
+    <div class="grid2">
+      <div>
+        <div class="code" id="cmd-install"><span class="c"># macOS / Linux</span>
+curl -fsSL https://raw.githubusercontent.com/ibrahim-dogan/agent-tally/main/host/install.sh | sh<button class="copy" data-copy="cmd-install">Copy</button></div>
+        <p class="note" style="margin-top:12px">Then restart your Claude Code sessions. Remove everything with <code>python3 ~/.agent-tally/agenttally.py uninstall</code>.</p>
+      </div>
+      <ol class="steps">
+        <li>Copies <b>agenttally.py</b> to <code>~/.agent-tally/</code></li>
+        <li>Adds hook entries to <b>~/.claude/settings.json</b> (a backup is saved next to it)</li>
+        <li>Starts the bridge with <b>launchd</b> (macOS) or a <b>systemd</b> user unit (Linux)</li>
+        <li>Other agents can report too: <code>agenttally.py send --source codex --id run1 --state done</code></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="tools" class="offline">
+    <h2><span class="n">03</span>Device tools</h2>
+    <p class="sub">Talk to the display straight from this page: check the colours, tune brightness or send fake sessions to see it work before the bridge is set up. Stop the bridge first so the serial port is free (<code>launchctl unload ~/Library/LaunchAgents/dev.agenttally.bridge.plist</code>).</p>
+    <div class="tools">
+      <div class="status">
+        <button class="btn primary" id="connect" style="width:100%;justify-content:center;margin-bottom:12px">Connect to display</button>
+        <div class="row"><span>Status</span><span id="st-status">not connected</span></div>
+        <div class="row"><span>Board</span><span id="st-board">–</span></div>
+        <div class="row"><span>Panel</span><span id="st-panel">–</span></div>
+        <div class="row"><span>Firmware</span><span id="st-fw">–</span></div>
+        <div class="row"><span>Screen</span><span id="st-size">–</span></div>
+        <div class="log" id="log"></div>
+      </div>
+      <div class="controls">
+        <div class="ctl" data-needs-device>
+          <label for="brightness">Brightness</label>
+          <input type="range" id="brightness" min="10" max="255" value="200">
+        </div>
+        <div class="ctl" data-needs-device>
+          <label for="gamma">Gamma curve</label>
+          <select id="gamma"><option value="0">Board default</option><option value="1">Curve 1</option><option value="2">Curve 2</option><option value="3">Curve 3</option><option value="4">Curve 4</option></select>
+        </div>
+        <div class="ctl" data-needs-device>
+          <label>Display</label>
+          <div class="switch">Invert colours <input type="checkbox" data-cfg="invert"></div>
+          <div class="switch">Swap red / blue <input type="checkbox" data-cfg="swaprb"></div>
+          <div class="switch">Rotate 180° <input type="checkbox" data-cfg="flip"></div>
+        </div>
+        <div class="ctl" data-needs-device>
+          <label>Behaviour</label>
+          <div class="switch">Dim when quiet <input type="checkbox" data-cfg="autodim"></div>
+          <div class="switch">Status LED <input type="checkbox" data-cfg="led"></div>
+          <div class="switch">Sound <input type="checkbox" data-cfg="sound"></div>
+        </div>
+        <div class="ctl" data-needs-device>
+          <label for="panel">Panel driver (2.8" only, restarts)</label>
+          <select id="panel"><option value="0">Auto-detect</option><option value="1">ILI9341</option><option value="2">ST7789</option></select>
+        </div>
+        <div class="ctl" data-needs-device>
+          <label>Try it</label>
+          <button class="btn ghost" id="demo">Send demo sessions</button>
+          <button class="btn ghost" id="test">Show colour test</button>
+          <button class="btn ghost" id="clear">Clear screen</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="stand">
+    <h2><span class="n">04</span>Print the stand</h2>
+    <div class="stand">
+      <div>
+        <p class="sub">A portrait stand that leans the screen back 15°, hides the USB plug and cable inside the foot and lets the cable out at the back. Four parts, no supports. Parametric OpenSCAD source included (tilt, plug room, fit).</p>
+        <ol class="steps">
+          <li>Print <b>front</b> face down, <b>back</b> outside down, <b>stand</b> upright with ≥30% infill, and the <b>plate</b>.</li>
+          <li>Put the board in the front bezel, close it with the back cover and <b>4× M3×14</b> countersunk screws.</li>
+          <li>Feed the cable up through the foot, plug it in and seat the body in the socket.</li>
+          <li>Press the cable into the tunnel and snap the plate on. Add rubber feet.</li>
+        </ol>
+        <div class="files">
+          <a href="stl/agenttally-cyd28-front.stl">front.stl <span>2.8"</span></a>
+          <a href="stl/agenttally-cyd28-back.stl">back.stl <span>2.8"</span></a>
+          <a href="stl/agenttally-cyd28-stand.stl">stand.stl <span>2.8"</span></a>
+          <a href="stl/agenttally-cyd28-plate.stl">plate.stl <span>2.8"</span></a>
+        </div>
+        <p class="note">3.5" files and the .scad source are in the <a href="https://github.com/ibrahim-dogan/agent-tally/tree/main/enclosure">repository</a>.</p>
+      </div>
+      <img src="img/assembly.png" alt="Rendered stand with the display leaning back" loading="lazy">
+    </div>
+  </section>
+
+  <footer>
+    <div>AgentTally · firmware and bridge MIT, enclosure CC BY 4.0 · Not affiliated with Anthropic or Sunton.</div>
+  </footer>
+</div>
+
+<script>
+// ---- board picker -> installer manifest
+const installer = document.getElementById("installer");
+document.querySelectorAll('#boards input').forEach(r => r.addEventListener("change", () => {
+  installer.setAttribute("manifest", `manifest/${r.value}.json`);
+}));
+
+// ---- copy buttons
+document.querySelectorAll(".copy").forEach(b => b.addEventListener("click", () => {
+  const el = document.getElementById(b.dataset.copy).cloneNode(true);
+  el.querySelectorAll(".c, .copy").forEach(n => n.remove());
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => { b.textContent = "Copied"; setTimeout(() => b.textContent = "Copy", 1500); });
+}));
+
+// ---- Web Serial device tools
+const $ = id => document.getElementById(id);
+const toolsSection = $("tools");
+let port = null, writer = null, pingTimer = null, whoTimer = null, linked = false;
+const enc = new TextEncoder();
+
+function log(msg) {
+  const el = $("log");
+  el.textContent += msg + "\n";
+  el.scrollTop = el.scrollHeight;
+}
+
+async function send(obj) {
+  if (!writer) return;
+  await writer.write(enc.encode(JSON.stringify(obj) + "\n"));
+}
+
+function setStatus(s) { $("st-status").textContent = s; }
+
+function onMessage(m) {
+  if (m.t === "hello") {
+    $("st-board").textContent = m.board; $("st-panel").textContent = m.panel;
+    $("st-fw").textContent = m.fw; $("st-size").textContent = `${m.w}×${m.h}`;
+    if (!linked) {
+      linked = true; clearInterval(whoTimer);
+      setStatus("connected"); toolsSection.classList.remove("offline");
+      hi(); send({ t: "cfg" });
+    }
+  } else if (m.t === "cfg") {
+    $("brightness").value = m.brightness;
+    $("gamma").value = m.gamma ?? 0;
+    document.querySelectorAll("[data-cfg]").forEach(c => { if (c.dataset.cfg in m) c.checked = !!m[c.dataset.cfg]; });
+  } else if (m.t === "log") {
+    log(m.m);
+  }
+}
+
+function hi() {
+  const now = Math.floor(Date.now() / 1000), tz = -new Date().getTimezoneOffset() * 60;
+  send({ t: "hi", v: 1, host: "web tools", now, tz });
+}
+
+async function readLoop() {
+  const decoder = new TextDecoderStream();
+  port.readable.pipeTo(decoder.writable).catch(() => {});
+  const reader = decoder.readable.getReader();
+  let buf = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (line.startsWith("{")) { try { onMessage(JSON.parse(line)); } catch (e) {} }
+      }
+    }
+  } catch (e) { log("read error: " + e.message); }
+  disconnected();
+}
+
+function disconnected() {
+  linked = false; port = null; writer = null;
+  clearInterval(pingTimer); clearInterval(whoTimer);
+  setStatus("not connected"); toolsSection.classList.add("offline");
+  $("connect").textContent = "Connect to display";
+}
+
+$("connect").addEventListener("click", async () => {
+  if (!("serial" in navigator)) { log("Web Serial is not available in this browser (use Chrome or Edge)."); return; }
+  if (port) { try { await port.close(); } catch (e) {} disconnected(); return; }
+  try {
+    port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x1a86 }, { usbVendorId: 0x10c4 }, { usbVendorId: 0x303a }] });
+    await port.open({ baudRate: 115200 });
+    await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+  } catch (e) { log(e.message); port = null; return; }
+  writer = port.writable.getWriter();
+  $("connect").textContent = "Disconnect";
+  setStatus("waiting for the display…");
+  readLoop();
+  whoTimer = setInterval(() => send({ t: "who", v: 1 }), 1500);
+  send({ t: "who", v: 1 });
+  pingTimer = setInterval(() => { if (linked) send({ t: "ping", now: Math.floor(Date.now() / 1000), tz: -new Date().getTimezoneOffset() * 60 }); }, 5000);
+});
+
+let brightTimer;
+$("brightness").addEventListener("input", e => { clearTimeout(brightTimer); brightTimer = setTimeout(() => send({ t: "cfg", brightness: +e.target.value }), 120); });
+$("gamma").addEventListener("change", e => send({ t: "cfg", gamma: +e.target.value }));
+$("panel").addEventListener("change", e => { send({ t: "cfg", panel: +e.target.value }); log("restarting with the new panel driver…"); linked = false; whoTimer = setInterval(() => send({ t: "who", v: 1 }), 1500); });
+document.querySelectorAll("[data-cfg]").forEach(c => c.addEventListener("change", () => send({ t: "cfg", [c.dataset.cfg]: c.checked ? 1 : 0 })));
+
+$("test").addEventListener("click", () => send({ t: "cfg", test: 1 }));
+$("clear").addEventListener("click", () => { send({ t: "cfg", test: 0 }); send({ t: "clr" }); });
+$("demo").addEventListener("click", async () => {
+  const demo = [
+    { id: "w1", name: "agent-tally", st: "waiting", det: "Allow $ pio run -t upload?", age: 12, pr: "flash the new firmware", cwd: "~/code/agent-tally" },
+    { id: "w2", name: "web-shop", st: "done", ack: 0, det: "All 48 tests pass.", age: 64, pr: "fix the flaky checkout test", rp: "The retry test shared a mock clock between tests. I isolated it per test; all 48 tests pass now.", cwd: "~/code/web-shop" },
+    { id: "w3", name: "api-gateway", st: "working", det: "Edit routes.ts", age: 140, sub: 2, pr: "add rate limiting", cwd: "~/work/api-gateway" },
+    { id: "w4", name: "infra", src: "codex", st: "working", det: "$ terraform plan", age: 300, cwd: "~/work/infra" },
+    { id: "w5", name: "notes", st: "idle", det: "Waiting for your next prompt", age: 1800, cwd: "~/notes" },
+  ];
+  await send({ t: "cfg", test: 0 });
+  await send({ t: "clr" });
+  for (const s of demo) await send(Object.assign({ t: "s", src: "claude", sub: 0, ack: 1, rp: "", pr: "" }, s, { id: "demo:" + s.id }));
+});
+</script>
+</body>
+</html>
