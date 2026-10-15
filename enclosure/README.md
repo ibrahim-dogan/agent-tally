@@ -36,8 +36,8 @@ The LED position (`led_xy`) was measured from a photo of one dual-USB board (±1
 
 ## Assembly
 
-1. Drop the light pipe into the bezel: the thin tip goes into the slot on the right edge until its shoulder stops it, the long arm lies across where the back of the board will be.
-2. Lay the board face down in the front bezel, under the pipe's arm. The USB port goes to the bottom, the end with the wider bezel.
+1. Lay the board face down in the front bezel. The USB port goes to the bottom, the end with the wider bezel.
+2. Slide the light pipe's thin leg down the groove in the right wall until its shoulder stops and the tip sits flush in the bezel slot. Its long arm now lies across the back of the board, with the angled end over the RGB LED.
 3. Put the rear cover on (its two pins press the pipe against the board) and drive the four M3 screws through it and the board into the bezel posts. Stop when they are snug, the posts are plastic.
 4. Push the cable up through the foot, from the bottom opening into the socket, and plug it into the board.
 5. Seat the body in the socket. Press the cable into the tunnel along the bottom of the foot so it leaves through the notch at the back.
