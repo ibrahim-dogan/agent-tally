@@ -25,7 +25,7 @@ Newline-delimited JSON, UTF-8, one object per line, at most 2047 bytes. Lines th
 |---|---|---|
 | `hi` | `v`, `host`, `now`, `tz` | Answer to `hello`. `now` is Unix time, `tz` the local UTC offset in seconds (used for the clock) |
 | `clr` | `now`, `tz` | Forget all sessions (sent before a full snapshot) |
-| `s` | `id`, `src`, `name`, `st`, `det`, `age`, `act`, `sub`, `ack`, `cwd`, `pr`, `rp` | Insert or update a session. `st` is `working`, `waiting`, `done` or `idle`; `age` is seconds in that state, `act` seconds since its last activity; `ack` = 0 means *done but not seen yet*. The display lists waiting sessions longest-waiting first, the rest most recently active first (re-sorted at most every 30 s) |
+| `s` | `id`, `src`, `name`, `st`, `det`, `age`, `act`, `sub`, `ack`, `cwd`, `pr`, `rp` | Insert or update a session. `st` is `working`, `waiting`, `done` or `idle`; `age` is seconds in that state, `act` seconds since its last activity; `ack` = 0 means *done but not seen yet*. The display lists waiting sessions first (longest-waiting first), then active ones (working, or done and unseen), then quiet ones; within those two groups the most recently active comes first, re-sorted at most every 30 s |
 | `d` | `id` | Remove a session |
 | `ping` | `now`, `tz` | Keep-alive, every 5 s |
 | `who` | `v` | Ask the display to send `hello` |

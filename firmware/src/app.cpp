@@ -39,13 +39,12 @@ static State parseState(const char* s) {
   return ST_IDLE;
 }
 
+// Sort groups: 0 = needs you, 1 = active (working, or done and not seen yet),
+// 2 = quiet (idle, or done and already seen). Within a group: see sortSessions().
 static int rank(const Session& s) {
-  switch (s.st) {
-    case ST_WAITING: return 0;
-    case ST_DONE: return s.ack ? 3 : 1;
-    case ST_WORKING: return 2;
-    default: return 4;
-  }
+  if (s.st == ST_WAITING) return 0;
+  if (s.st == ST_WORKING || (s.st == ST_DONE && !s.ack)) return 1;
+  return 2;
 }
 
 // ------------------------------------------------------------------ setup
@@ -279,7 +278,7 @@ Session* App::alloc(const char* id) {
     uint32_t best = 0;
     for (auto& x : sess_) {
       uint32_t age = hal_.ms() - x.sinceMs;
-      if (rank(x) >= 3 && age >= best) { best = age; s = &x; }
+      if (rank(x) >= 2 && age >= best) { best = age; s = &x; }
     }
     if (!s) return nullptr;
   }
