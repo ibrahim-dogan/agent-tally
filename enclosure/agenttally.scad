@@ -196,7 +196,7 @@ module front() {
     // lip recess for the rear cover
     difference() {
       rrect(in_x0 - 0.9, in_y0 - 0.9, in_x1 + 0.9, in_y1 + 0.9, corner_r - wall + 0.9, 1.6, z_split - eps);
-      rrect(in_x0 - eps, in_y0 - eps, in_x1 + eps, in_y1 + eps, corner_r - wall, 2, z_split - 1);
+      rrect(in_x0 - eps, in_y0 - eps, in_x1 + eps, in_y1 + eps, corner_r - wall, 4, z_split - 1);
     }
   }
 }
@@ -212,7 +212,7 @@ module back() {
       // lip that keys into the bezel recess
       difference() {
         rrect(in_x0 - 0.75, in_y0 - 0.75, in_x1 + 0.75, in_y1 + 0.75, corner_r - wall + 0.75, 1.4, z_split - eps);
-        rrect(in_x0 + eps, in_y0 + eps, in_x1 - eps, in_y1 - eps, corner_r - wall, 2, z_split - 1);
+        rrect(in_x0 + eps, in_y0 + eps, in_x1 - eps, in_y1 - eps, corner_r - wall, 4, z_split - 1);  // taller than the lip: keep the tray open
       }
       // screw bosses up to the PCB back
       for (h = holes) translate([h[0], h[1], z_back_in - eps]) cylinder(d = 5.6, h = back_clear + eps);
@@ -365,6 +365,13 @@ else if (part == "back") translate([0, 0, -z_back]) back();
 else if (part == "stand") stand();
 else if (part == "plate") plate();
 else if (part == "body") body_assembly();
+// assembly order, screen facing down: bezel, board, light pipe, rear cover
+else if (part == "exploded") rotate([180, 0, 0]) {
+  color([0.25, 0.25, 0.27]) translate([0, 0, 0]) front();
+  translate([0, 0, -22]) board_model();
+  if (has_lp) color([1, 0.45, 0.1, 0.9]) translate([0, 0, -38]) light_pipe_body();
+  color([0.35, 0.35, 0.38]) translate([0, 0, -60]) back();
+}
 else if (part == "stand_text") stand_text();
 // a light pipe parked next to the stand, so both print as one multi-part object
 else if (part == "light_pipe_beside") translate([foot_w / 2 + 8, foot_front, 0]) rotate([0, 0, 90]) rotate([90, 0, 0]) translate([-led_xy[0], -ly0, 0]) light_pipe_body();
