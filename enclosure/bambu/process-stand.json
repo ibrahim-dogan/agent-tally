@@ -1,0 +1,12 @@
+{
+  "type": "process",
+  "name": "AgentTally stand 0.20mm",
+  "inherits": "0.20mm Standard @BBL A1M",
+  "from": "User",
+  "print_settings_id": "AgentTally stand 0.20mm",
+  "compatible_printers": ["Bambu Lab A1 mini 0.4 nozzle"],
+  "wall_loops": "4",
+  "sparse_infill_density": "40%",
+  "sparse_infill_pattern": "gyroid",
+  "enable_support": "0"
+}

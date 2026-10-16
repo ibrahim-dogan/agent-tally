@@ -21,6 +21,8 @@ if [ "$1" != "preview" ]; then
     done
   done
   run --export-format=binstl -o stl/agenttally-cyd28-light_pipe.stl -D 'part="light_pipe"' agenttally.scad
+  run --export-format=binstl -o stl/agenttally-cyd28-stand_text.stl -D 'part="stand_text"' agenttally.scad
+  run --export-format=binstl -o stl/agenttally-cyd28-light_pipe_beside.stl -D 'part="light_pipe_beside"' agenttally.scad
   for b in cyd28; do :
   done
 fi

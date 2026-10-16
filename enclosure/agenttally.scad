@@ -16,7 +16,7 @@
 // display towards +z, components on the back towards -z.
 
 /* [Render] */
-part = "assembly"; // [assembly, body, section, light_section, front, back, stand, plate, light_pipe, print_all]
+part = "assembly"; // [assembly, body, section, stand_text, light_section, front, back, stand, plate, light_pipe, print_all]
 board = "cyd28";   // [cyd28, cyd35]
 show_board = true;
 
@@ -25,6 +25,7 @@ tilt = 15;          // degrees the screen leans back
 plug_room = 34;     // straight room below the board for the USB plug + bend (use ~16 with a 90-degree cable)
 foot_depth = 80;    // front-to-back footprint of the foot
 socket_depth = 12;  // how deep the body sits in the socket
+label = "agent tally";  // text on the front of the stand
 
 /* [Status light] */
 // Light pipe that carries the RGB LED on the back of the board to a light bar
@@ -305,10 +306,22 @@ module stand() {
     // cable exit at the rear, open to the bottom so the cable drops in
     translate([-4, foot_back - 15, -eps]) cube([8, 17, 6]);
     translate([0, foot_back - 15, 6]) rotate([-90, 0, 0]) cylinder(d = 8, h = 17);
-    // engraved name on the sloped front face
-    translate([0, 0, plug_room * 0.45]) rotate([90 - tilt, 0, 0])
-      translate([0, 0, -foot_front - plug_room * 0.45 * tan(tilt) - 0.6])
-        linear_extrude(2) text("agent tally", size = 4.2, font = "Liberation Sans:style=Bold", halign = "center", valign = "center");
+    // engraved name on the sloped front face (printed as a colour inlay with AMS)
+    stand_text_volume();
+  }
+}
+
+module stand_text_volume() {
+  translate([0, 0, plug_room * 0.45]) rotate([90 - tilt, 0, 0])
+    translate([0, 0, -foot_front - plug_room * 0.45 * tan(tilt) - 0.6])
+      linear_extrude(2) text(label, size = 4.2, font = "Liberation Sans:style=Bold", halign = "center", valign = "center");
+}
+
+// the letters only, to print in a second colour inside the engraving
+module stand_text() {
+  intersection() {
+    stand_outer();
+    stand_text_volume();
   }
 }
 
@@ -352,6 +365,9 @@ else if (part == "back") translate([0, 0, -z_back]) back();
 else if (part == "stand") stand();
 else if (part == "plate") plate();
 else if (part == "body") body_assembly();
+else if (part == "stand_text") stand_text();
+// a light pipe parked next to the stand, so both print as one multi-part object
+else if (part == "light_pipe_beside") translate([foot_w / 2 + 8, foot_front, 0]) rotate([0, 0, 90]) rotate([90, 0, 0]) translate([-led_xy[0], -ly0, 0]) light_pipe_body();
 // printed lying on its side (y = ly0 face down): the fan rises from the bed, no supports
 else if (part == "light_pipe") rotate([90, 0, 0]) translate([0, -ly0, 0]) light_pipe_body();
 else if (part == "light_section") {
