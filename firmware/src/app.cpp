@@ -163,13 +163,46 @@ void App::counts(int& waiting, int& done, int& working, int& idle) {
 void App::onStateChange(int waiting, int done) {
   if (waiting > lastWaiting_) {
     lastActivity_ = hal_.ms();
+    startFrame(cWait_);
     if (cfg_.sound) { hal_.tone(1760, 70); hal_.tone(2349, 90); }
   } else if (done > lastDone_) {
     lastActivity_ = hal_.ms();
+    startFrame(cDone_);
     if (cfg_.sound) hal_.tone(1318, 60);
   }
   lastWaiting_ = waiting;
   lastDone_ = done;
+}
+
+static const uint32_t FRAME_PULSE_MS = 1400, FRAME_PULSES = 3;
+
+void App::startFrame(uint16_t color) {
+  if (!cfg_.flash) return;
+  frameColor_ = color;
+  frameStart_ = hal_.ms();
+  frameOn_ = true;
+  dirty_ = true;
+}
+
+// Soft glow along the screen edges: a few layers fading inwards, pulsing
+// FRAME_PULSES times and then gone.
+void App::drawFrame() {
+  if (!frameOn_) return;
+  uint32_t t = hal_.ms() - frameStart_;
+  if (t >= FRAME_PULSE_MS * FRAME_PULSES) { frameOn_ = false; dirty_ = true; return; }
+  float ph = (t % FRAME_PULSE_MS) / (float)FRAME_PULSE_MS;
+  float k = 0.5f - 0.5f * cosf(ph * 2 * (float)M_PI);
+  const int layers = 3;
+  int th = S(3);
+  for (int i = 0; i < layers; i++) {
+    uint8_t a = (uint8_t)(k * (255 - i * 85));
+    uint16_t c = mix(cBg_, frameColor_, a);
+    int o = i * th;
+    p_.fill(o, o, W_ - 2 * o, th, c);                    // top
+    p_.fill(o, H_ - o - th, W_ - 2 * o, th, c);          // bottom
+    p_.fill(o, o + th, th, H_ - 2 * o - 2 * th, c);      // left
+    p_.fill(W_ - o - th, o + th, th, H_ - 2 * o - 2 * th, c);  // right
+  }
 }
 
 float App::pulse(uint32_t periodMs) const {
@@ -178,7 +211,7 @@ float App::pulse(uint32_t periodMs) const {
 }
 
 bool App::animating() const {
-  if (touching_ || ledTestUntil_) return true;
+  if (touching_ || ledTestUntil_ || frameOn_) return true;
   for (auto& s : sess_)
     if (s.used && (s.st == ST_WAITING || s.st == ST_WORKING)) return true;
   return false;
@@ -258,8 +291,9 @@ void App::sendCfg() {
   char b[220];
   snprintf(b, sizeof b,
            "{\"t\":\"cfg\",\"brightness\":%d,\"autodim\":%d,\"invert\":%d,\"flip\":%d,\"swaprb\":%d,"
-           "\"led\":%d,\"sound\":%d,\"gamma\":%d}",
-           cfg_.brightness, cfg_.autodim, cfg_.invert, cfg_.flip, cfg_.swaprb, cfg_.led, cfg_.sound, cfg_.gamma);
+           "\"led\":%d,\"sound\":%d,\"gamma\":%d,\"flash\":%d}",
+           cfg_.brightness, cfg_.autodim, cfg_.invert, cfg_.flip, cfg_.swaprb, cfg_.led, cfg_.sound, cfg_.gamma,
+           cfg_.flash);
   send(b);
 }
 
@@ -373,6 +407,7 @@ void App::handleLine(char* line) {
     if (doc["swaprb"].is<int>()) { cfg_.swaprb = doc["swaprb"].as<int>(); pal = any = true; }
     if (doc["led"].is<int>()) { cfg_.led = doc["led"].as<int>(); any = true; }
     if (doc["sound"].is<int>()) { cfg_.sound = doc["sound"].as<int>(); any = true; }
+    if (doc["flash"].is<int>()) { cfg_.flash = doc["flash"].as<int>(); any = true; if (cfg_.flash) startFrame(cAccent_); }
     if (doc["gamma"].is<int>()) { cfg_.gamma = doc["gamma"].as<int>() & 7; disp = any = true; }
     if (doc["beep"].is<int>()) hal_.tone(1760, 120);
     if (doc["panel"].is<int>()) hal_.setPanel(doc["panel"].as<int>());
@@ -483,7 +518,7 @@ void App::onTap(int x, int y) {
         break;
       case 1: cfg_.autodim = !cfg_.autodim; break;
       case 2: cfg_.invert = !cfg_.invert; disp = true; break;
-      case 3: cfg_.swaprb = !cfg_.swaprb; pal = true; break;
+      case 3: cfg_.flash = !cfg_.flash; if (cfg_.flash) startFrame(cAccent_); break;
       case 4: cfg_.flip = !cfg_.flip; disp = true; break;
       case 5: cfg_.led = !cfg_.led; break;
       case 6: cfg_.sound = !cfg_.sound; if (cfg_.sound) hal_.tone(1760, 80); break;
@@ -546,6 +581,7 @@ void App::render() {
     p_.oy = by;
     band.fillSprite(cBg_);
     drawScreen();
+    drawFrame();
     pushBand(band, by);
   }
   tft_.waitDMA();
@@ -851,7 +887,7 @@ void App::drawSettings() {
   struct Row { const char* label; int kind; bool on; };  // kind 0 toggle, 1 brightness, 2 button
   Row rows[] = {
       {"Brightness", 1, false},        {"Dim when quiet", 0, cfg_.autodim}, {"Invert colors", 0, cfg_.invert},
-      {"Swap red / blue", 0, cfg_.swaprb}, {"Rotate 180\xC2\xB0", 0, cfg_.flip}, {"Status LED", 0, cfg_.led},
+      {"Flash on alerts", 0, cfg_.flash}, {"Rotate 180\xC2\xB0", 0, cfg_.flip}, {"Status LED", 0, cfg_.led},
       {"Sound", 0, cfg_.sound},        {"Display test", 2, false},       {"Calibrate touch", 2, false},
   };
   int rh = S(28);

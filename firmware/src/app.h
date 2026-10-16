@@ -13,7 +13,7 @@ enum State : uint8_t { ST_WAITING = 0, ST_DONE = 1, ST_WORKING = 2, ST_IDLE = 3 
 
 struct Settings {
   uint8_t magic = 0xA7;
-  uint8_t version = 2;
+  uint8_t version = 3;
   uint8_t brightness = 200;  // 10..255
   bool autodim = true;       // dim after a few quiet minutes
   bool invert = false;       // XOR on top of the panel default
@@ -21,6 +21,7 @@ struct Settings {
   bool swaprb = false;       // swap red/blue in the UI palette (BGR panels)
   bool led = true;           // RGB status LED
   bool sound = false;        // beep on the speaker connector
+  bool flash = true;         // pulse a coloured frame round the screen on alerts
   uint8_t gamma = 0;         // 0 = panel default, 1..4 = gamma curve 1/2/3/4 (GAMSET 0x26)
   bool touchCal = false;     // calibration below is valid
   uint16_t cal[8] = {0};
@@ -125,6 +126,12 @@ class App {
 
   // LED test: the host drives the LED directly (colour + pattern) to try how
   // colours read through the light pipe. Ends on its own after led_ms.
+  // Alert frame: a few pulses of colour round the screen edge when a session
+  // starts waiting for you (red) or finishes (green).
+  uint16_t frameColor_ = 0;
+  uint32_t frameStart_ = 0;
+  bool frameOn_ = false;
+
   uint8_t ledTest_[3] = {0, 0, 0};
   uint8_t ledTestPat_ = 0;
   uint32_t ledTestUntil_ = 0;
@@ -160,6 +167,8 @@ class App {
   void drawSettings();
   void drawTest();
   void drawLedTest();
+  void drawFrame();
+  void startFrame(uint16_t color);
   float ledPattern(int pat) const;
   void drawStatusIcon(State st, int cx, int cy, int r);
   void drawToggle(int x, int y, bool on);
