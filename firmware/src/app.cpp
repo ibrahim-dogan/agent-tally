@@ -163,11 +163,11 @@ void App::counts(int& waiting, int& done, int& working, int& idle) {
 void App::onStateChange(int waiting, int done) {
   if (waiting > lastWaiting_) {
     lastActivity_ = hal_.ms();
-    startFrame(cWait_);
+    startAlert(cWait_, 255, 0, 0);
     if (cfg_.sound) { hal_.tone(1760, 70); hal_.tone(2349, 90); }
   } else if (done > lastDone_) {
     lastActivity_ = hal_.ms();
-    startFrame(cDone_);
+    startAlert(cDone_, 0, 255, 0);
     if (cfg_.sound) hal_.tone(1318, 60);
   }
   lastWaiting_ = waiting;
@@ -176,22 +176,28 @@ void App::onStateChange(int waiting, int done) {
 
 static const uint32_t FRAME_PULSE_MS = 1400, FRAME_PULSES = 3;
 
-void App::startFrame(uint16_t color) {
-  if (!cfg_.flash) return;
+void App::startAlert(uint16_t color, uint8_t r, uint8_t g, uint8_t b) {
+  uint32_t now = hal_.ms();
+  beatStart_ = now;
+  alertUntil_ = now + FRAME_PULSE_MS * FRAME_PULSES;
+  alertRgb_[0] = r; alertRgb_[1] = g; alertRgb_[2] = b;
   frameColor_ = color;
-  frameStart_ = hal_.ms();
-  frameOn_ = true;
+  frameOn_ = cfg_.flash;
   dirty_ = true;
+}
+
+// 0 -> 1 -> 0 once per FRAME_PULSE_MS, phase-locked to the last alert.
+float App::beat() const {
+  float ph = ((hal_.ms() - beatStart_) % FRAME_PULSE_MS) / (float)FRAME_PULSE_MS;
+  return 0.5f - 0.5f * cosf(ph * 2 * (float)M_PI);
 }
 
 // Soft glow along the screen edges: a few layers fading inwards, pulsing
 // FRAME_PULSES times and then gone.
 void App::drawFrame() {
   if (!frameOn_) return;
-  uint32_t t = hal_.ms() - frameStart_;
-  if (t >= FRAME_PULSE_MS * FRAME_PULSES) { frameOn_ = false; dirty_ = true; return; }
-  float ph = (t % FRAME_PULSE_MS) / (float)FRAME_PULSE_MS;
-  float k = 0.5f - 0.5f * cosf(ph * 2 * (float)M_PI);
+  if ((int32_t)(hal_.ms() - alertUntil_) >= 0) { frameOn_ = false; dirty_ = true; return; }
+  float k = beat();
   const int layers = 3;
   int th = S(3);
   for (int i = 0; i < layers; i++) {
@@ -211,7 +217,7 @@ float App::pulse(uint32_t periodMs) const {
 }
 
 bool App::animating() const {
-  if (touching_ || ledTestUntil_ || frameOn_) return true;
+  if (touching_ || ledTestUntil_ || frameOn_ || (int32_t)(hal_.ms() - alertUntil_) < 0) return true;
   for (auto& s : sess_)
     if (s.used && (s.st == ST_WAITING || s.st == ST_WORKING)) return true;
   return false;
@@ -246,8 +252,11 @@ void App::updateLed() {
   int working = 0;
   for (auto& s : sess_)
     if (s.used && s.st == ST_WORKING) working++;
-  if (lastWaiting_) {
-    uint8_t v = 25 + (uint8_t)(230 * pulse(1600));
+  if ((int32_t)(hal_.ms() - alertUntil_) < 0) {  // in step with the frame
+    float k = beat();
+    hal_.led((uint8_t)(alertRgb_[0] * k), (uint8_t)(alertRgb_[1] * k), (uint8_t)(alertRgb_[2] * k));
+  } else if (lastWaiting_) {
+    uint8_t v = 25 + (uint8_t)(230 * beat());
     hal_.led(v, 0, 0);
   } else if (lastDone_) {
     hal_.led(0, 170, 0);
@@ -407,7 +416,7 @@ void App::handleLine(char* line) {
     if (doc["swaprb"].is<int>()) { cfg_.swaprb = doc["swaprb"].as<int>(); pal = any = true; }
     if (doc["led"].is<int>()) { cfg_.led = doc["led"].as<int>(); any = true; }
     if (doc["sound"].is<int>()) { cfg_.sound = doc["sound"].as<int>(); any = true; }
-    if (doc["flash"].is<int>()) { cfg_.flash = doc["flash"].as<int>(); any = true; if (cfg_.flash) startFrame(cAccent_); }
+    if (doc["flash"].is<int>()) { cfg_.flash = doc["flash"].as<int>(); any = true; if (cfg_.flash) startAlert(cAccent_, 255, 90, 40); }
     if (doc["gamma"].is<int>()) { cfg_.gamma = doc["gamma"].as<int>() & 7; disp = any = true; }
     if (doc["beep"].is<int>()) hal_.tone(1760, 120);
     if (doc["panel"].is<int>()) hal_.setPanel(doc["panel"].as<int>());
@@ -518,7 +527,7 @@ void App::onTap(int x, int y) {
         break;
       case 1: cfg_.autodim = !cfg_.autodim; break;
       case 2: cfg_.invert = !cfg_.invert; disp = true; break;
-      case 3: cfg_.flash = !cfg_.flash; if (cfg_.flash) startFrame(cAccent_); break;
+      case 3: cfg_.flash = !cfg_.flash; if (cfg_.flash) startAlert(cAccent_, 255, 90, 40); break;
       case 4: cfg_.flip = !cfg_.flip; disp = true; break;
       case 5: cfg_.led = !cfg_.led; break;
       case 6: cfg_.sound = !cfg_.sound; if (cfg_.sound) hal_.tone(1760, 80); break;
@@ -649,7 +658,7 @@ void App::ageText(uint32_t sinceMs, char* out, size_t n) const {
 void App::drawHeader(int waiting, int done, int working) {
   int hh = S(36);
   if (!p_.vis(0, hh + 1)) return;
-  uint16_t bg = waiting ? mix(cBg_, cWait_, 26 + (uint8_t)(34 * pulse(1600))) : cBg_;
+  uint16_t bg = waiting ? mix(cBg_, cWait_, 26 + (uint8_t)(34 * beat())) : cBg_;
   p_.fill(0, 0, W_, hh, bg);
   p_.hline(0, hh, W_, waiting ? mix(cLine_, cWait_, 140) : cLine_);
 
@@ -713,7 +722,7 @@ void App::drawStatusIcon(State st, int cx, int cy, int r) {
       break;
     }
     case ST_WAITING: {
-      float k = pulse(1600);
+      float k = beat();
       p_.circle(cx, cy, r + (int)(S(3) * k), mix(cCard_, cWait_, 70));
       p_.circle(cx, cy, r - 1, cWait_);
       break;
@@ -731,7 +740,7 @@ void App::drawStatusIcon(State st, int cx, int cy, int r) {
 void App::drawCard(const Session& s, int y, int h) {
   int x = S(8), w = W_ - S(16);
   uint16_t bg = cCard_;
-  if (s.st == ST_WAITING) bg = mix(cCard_, cWait_, 22 + (uint8_t)(22 * pulse(1600)));
+  if (s.st == ST_WAITING) bg = mix(cCard_, cWait_, 22 + (uint8_t)(22 * beat()));
   else if (s.st == ST_DONE && !s.ack) bg = mix(cCard_, cDone_, 24);
   p_.rrect(x, y, w, h, S(10), bg);
   uint16_t col = stateColor(s.st);
@@ -838,7 +847,7 @@ void App::drawDetail() {
   int lw = Painter::width(fSmall_, lab) + S(16);
   int ph = fSmall_->height + S(6);
   int px = W_ - S(12) - lw, py = (hh - ph) / 2;
-  float k = s.st == ST_WAITING ? pulse(1600) : 0;
+  float k = s.st == ST_WAITING ? beat() : 0;
   p_.rrect(px, py, lw, ph, ph / 2, mix(cBg_, col, 70 + (uint8_t)(50 * k)));
   p_.text(fSmall_, px + S(8), py + S(3), lab, cText_);
 

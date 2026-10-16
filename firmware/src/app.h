@@ -128,8 +128,11 @@ class App {
   // colours read through the light pipe. Ends on its own after led_ms.
   // Alert frame: a few pulses of colour round the screen edge when a session
   // starts waiting for you (red) or finishes (green).
+  // The frame, the LED and every "needs you" pulse on screen share one beat that
+  // restarts with each alert, so they all rise and fall together.
   uint16_t frameColor_ = 0;
-  uint32_t frameStart_ = 0;
+  uint8_t alertRgb_[3] = {0, 0, 0};
+  uint32_t beatStart_ = 0, alertUntil_ = 0;
   bool frameOn_ = false;
 
   uint8_t ledTest_[3] = {0, 0, 0};
@@ -168,7 +171,8 @@ class App {
   void drawTest();
   void drawLedTest();
   void drawFrame();
-  void startFrame(uint16_t color);
+  void startAlert(uint16_t color, uint8_t r, uint8_t g, uint8_t b);
+  float beat() const;
   float ledPattern(int pat) const;
   void drawStatusIcon(State st, int cx, int cy, int r);
   void drawToggle(int x, int y, bool on);
