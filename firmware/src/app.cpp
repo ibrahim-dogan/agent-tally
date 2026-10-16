@@ -311,9 +311,16 @@ void App::handleLine(char* line) {
     if (!s) return;
     State st = parseState(doc["st"] | "idle");
     uint32_t age = doc["age"] | 0;
-    if (st != s->st || !s->sinceMs) lastActivity_ = now;
+    uint32_t act = doc["act"] | age;
+    bool fresh = !s->sinceMs;
+    bool changed = fresh || st != s->st;
+    if (changed) lastActivity_ = now;
     s->st = st;
     s->sinceMs = now - age * 1000;
+    s->actMs = now - act * 1000;
+    // New sessions and state changes take their place at once; plain activity
+    // only moves a card at the next calm re-sort (see sortSessions).
+    if (changed) s->orderMs = s->actMs;
     copyUtf8(s->src, sizeof s->src, doc["src"] | "");
     copyUtf8(s->name, sizeof s->name, doc["name"] | "");
     copyUtf8(s->det, sizeof s->det, doc["det"] | "");
@@ -464,12 +471,21 @@ void App::sortSessions() {
   for (int i = 0; i < MAX_SESSIONS; i++)
     if (sess_[i].used) order_[count_++] = i;
   uint32_t now = hal_.ms();
+  if (now - lastResort_ >= 30000) {
+    lastResort_ = now;
+    for (auto& s : sess_) s.orderMs = s.actMs;
+  }
+  // Waiting sessions: whoever has waited longest first (answer them in order).
+  // Everything else: most recently active first, refreshed every 30 s.
   for (int i = 1; i < count_; i++) {  // insertion sort, n <= 24
     int v = order_[i], j = i - 1;
     while (j >= 0) {
       const Session &a = sess_[order_[j]], &b = sess_[v];
       int ra = rank(a), rb = rank(b);
-      bool after = ra > rb || (ra == rb && (now - a.sinceMs) > (now - b.sinceMs));
+      bool after;
+      if (ra != rb) after = ra > rb;
+      else if (a.st == ST_WAITING) after = (now - a.sinceMs) < (now - b.sinceMs);
+      else after = (now - a.orderMs) > (now - b.orderMs);
       if (!after) break;
       order_[j + 1] = order_[j];
       j--;

@@ -184,7 +184,8 @@ class Store:
         with self.lock:
             return self.sessions.get(sid)
 
-    def upsert(self, sid, **fields):
+    def upsert(self, sid, quiet=False, **fields):
+        """quiet=True: bookkeeping change that should not count as activity."""
         now = time.time()
         with self.lock:
             s = self.sessions.get(sid)
@@ -209,6 +210,8 @@ class Store:
             if event:
                 s["events"] = (s["events"] + [[int(now), event]])[-8:]
             s["updated"] = now
+            if not quiet:
+                s["act"] = now
             self._evict()
             self._emit("upsert", dict(s))
             return s
@@ -398,7 +401,7 @@ def handle_generic(ev):
         fields["sub"] = int(ev["sub"])
     STORE.upsert(sid, state=state, event=ev.get("event") or state, **fields)
     if ev.get("age"):  # backdate (demo data, replays)
-        STORE.upsert(sid, since=time.time() - float(ev["age"]))
+        STORE.upsert(sid, since=time.time() - float(ev["age"]), act=time.time() - float(ev["age"]), quiet=True)
 
 
 def handle_codex_notify(payload):
@@ -418,6 +421,7 @@ def wire_session(s):
     now = time.time()
     return {"t": "s", "id": s["id"][:40], "src": ascii_fold(s.get("src"), 10), "name": ascii_fold(s.get("name"), 40),
             "st": s["state"], "det": ascii_fold(s.get("detail"), 96), "age": int(max(0, now - s["since"])),
+            "act": int(max(0, now - s.get("act", s["updated"]))),
             "sub": int(s.get("sub") or 0), "ack": 1 if s.get("ack") else 0,
             "cwd": ascii_fold(s.get("cwd", "").replace(os.path.expanduser("~"), "~", 1), 96),
             "pr": ascii_fold(s.get("prompt"), 200), "rp": ascii_fold(strip_markdown(s.get("reply") or ""), 300)}
@@ -772,7 +776,7 @@ def sweeper(stop, done_to_idle_min):
                     STORE.upsert(s["id"], state="idle", detail="Interrupted", event="interrupted")
                     continue
             if s["state"] == "done" and done_to_idle_min and now - s["since"] > done_to_idle_min * 60:
-                STORE.upsert(s["id"], state="idle", ack=True)
+                STORE.upsert(s["id"], state="idle", ack=True, quiet=True)
             # Never heard of again (no pid tracking): forget after 12h.
             if now - s["updated"] > 12 * 3600 and not s.get("pid"):
                 STORE.remove(s["id"])

@@ -131,6 +131,7 @@ class BridgeTest(unittest.TestCase):
         self.assertLessEqual(len(w["det"]), 96)
         self.assertEqual(w["cwd"], "~/code")
         self.assertLess(len(line.encode()), 2048)
+        self.assertIn("act", w)
 
     def test_simulator_link_gets_snapshot_and_updates(self):
         at.STORE.upsert("claude:pre", state="working", name="before")

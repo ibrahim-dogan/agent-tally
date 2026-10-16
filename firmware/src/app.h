@@ -55,6 +55,8 @@ struct Session {
   char rp[608];
   State st = ST_IDLE;
   uint32_t sinceMs = 0;  // device clock when the state started
+  uint32_t actMs = 0;    // device clock of the last activity (tool call, prompt...)
+  uint32_t orderMs = 0;  // actMs as of the last re-sort: keeps the list calm
   uint8_t sub = 0;
   bool ack = true;
 };
@@ -94,6 +96,7 @@ class App {
   Session sess_[MAX_SESSIONS];
   int order_[MAX_SESSIONS];
   int count_ = 0;
+  uint32_t lastResort_ = 0;
 
   // host link
   char line_[kLineMax];
