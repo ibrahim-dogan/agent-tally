@@ -446,6 +446,7 @@ class DeviceLink:
         self.info = {}
         self.last_rx = time.time()
         self.last_hello = 0.0
+        self.kind = "sim"
 
     def send(self, obj):
         if not self.alive:
@@ -478,10 +479,11 @@ class DeviceLink:
             if self.info and time.time() - self.last_hello < 2:
                 return
             self.last_hello = time.time()
-            self.info = msg
+            self.info = dict(msg, cfg=self.info.get("cfg"))
             log(f"[{self.name}] device: {msg.get('board')} fw {msg.get('fw')} {msg.get('w')}x{msg.get('h')}")
             self.send({"t": "hi", "v": PROTO, "host": host_label(), "now": int(time.time()), "tz": tz_offset()})
             self.send_snapshot()
+            self.send({"t": "cfg"})  # ask for the current settings (web device tools)
         elif t == "ack":
             STORE.ack(str(msg.get("id", "")))
             for s in STORE.snapshot():
@@ -684,10 +686,35 @@ def candidate_ports():
     return sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
 
 
+# The web flasher asks the bridge to let go of the serial port while it installs
+# firmware; the pause ends on its own so a closed browser tab can't keep it.
+SERIAL_PAUSED_UNTIL = 0.0
+
+
+def serial_paused():
+    return time.time() < SERIAL_PAUSED_UNTIL
+
+
+def serial_release(seconds):
+    global SERIAL_PAUSED_UNTIL
+    SERIAL_PAUSED_UNTIL = time.time() + max(5.0, min(float(seconds), 600.0))
+    log(f"serial port released for {int(SERIAL_PAUSED_UNTIL - time.time())}s (firmware update)")
+
+
+def serial_resume():
+    global SERIAL_PAUSED_UNTIL
+    if SERIAL_PAUSED_UNTIL:
+        log("serial port: resuming")
+    SERIAL_PAUSED_UNTIL = 0.0
+
+
 def serial_manager(fixed_port, baud, stop):
     """Keep one link per attached display; rescan every few seconds."""
     busy = {}
     while not stop.is_set():
+        if serial_paused():
+            stop.wait(1)
+            continue
         ports = [fixed_port] if fixed_port else candidate_ports()
         for path in ports:
             if path in busy and busy[path].is_alive():
@@ -705,6 +732,7 @@ def serial_session(path, baud):
         time.sleep(5)
         return
     link = DeviceLink(os.path.basename(path))
+    link.kind = "serial"
     HUB.add(link)
     # Ask the device to introduce itself; a board that never answers is not ours.
     started = last_who = time.time()
@@ -713,6 +741,8 @@ def serial_session(path, baud):
     def read():
         nonlocal last_who
         now = time.time()
+        if serial_paused():
+            return None  # closes the port for the web flasher
         if not link.info:
             if now - started > 8:
                 dbg(f"{path}: no AgentTally hello, ignoring for now")
@@ -805,19 +835,52 @@ j.sessions.map(s=>`<div class="c ${s.state}"><span class=t>${s.state} · ${Math.
 const esc=s=>(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));r();setInterval(r,1500)</script>"""
 
 
+WEB_ORIGINS = {"https://ibrahim-dogan.github.io"} | set(filter(None, os.environ.get("AGENTTALLY_ORIGINS", "").split(",")))
+
+
+def origin_allowed(origin):
+    """The web flasher (GitHub Pages or a local copy) may talk to the bridge from the browser."""
+    if not origin:
+        return False
+    if origin in WEB_ORIGINS:
+        return True
+    return bool(re.match(r"^http://(127\.0\.0\.1|localhost)(:\d+)?$", origin))
+
+
 class Api(BaseHTTPRequestHandler):
     server_version = "AgentTally/" + VERSION
 
     def log_message(self, fmt, *args):
         dbg("http", fmt % args)
 
+    def _cors(self):
+        origin = self.headers.get("Origin")
+        if origin_allowed(origin):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
     def _json(self, code, obj):
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self._cors()
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        origin = self.headers.get("Origin")
+        if not origin_allowed(origin):
+            self.send_response(403)
+            self.end_headers()
+            return
+        self.send_response(204)
+        self._cors()
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
 
     def _body(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -836,11 +899,21 @@ class Api(BaseHTTPRequestHandler):
             sess = [{k: v for k, v in s.items() if k != "transcript"} for s in STORE.snapshot()]
             self._json(200, {"sessions": sess, "devices": [l.info for l in HUB.links if l.info]})
         elif self.path == "/api/health":
-            self._json(200, {"ok": True, "version": VERSION})
+            self._json(200, {"ok": True, "version": VERSION, "serial_paused": serial_paused()})
+        elif self.path.startswith("/api/device"):
+            self._json(200, {"devices": [dict(l.info, kind=l.kind) for l in HUB.links if l.info],
+                             "serial_paused": serial_paused()})
         else:
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        # Only JSON bodies: a browser can't send those cross-site without a CORS preflight,
+        # which only the web flasher's origins pass. Blocks drive-by requests from other sites.
+        if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+            return self._json(415, {"error": "Content-Type must be application/json"})
+        origin = self.headers.get("Origin")
+        if origin and not origin_allowed(origin):
+            return self._json(403, {"error": "origin not allowed"})
         try:
             data = self._body()
             if self.path.startswith("/hook/claude"):
@@ -854,6 +927,10 @@ class Api(BaseHTTPRequestHandler):
                 handle_codex_notify(data)
             elif self.path.startswith("/api/ack"):
                 STORE.ack(str(data.get("id", "")))
+            elif self.path.startswith("/api/serial/release"):
+                serial_release(data.get("seconds", 120))
+            elif self.path.startswith("/api/serial/resume"):
+                serial_resume()
             elif self.path.startswith("/api/device"):
                 HUB.broadcast(dict(data, t="cfg"))
             elif self.path.startswith("/api/clear"):

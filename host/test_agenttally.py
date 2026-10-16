@@ -139,14 +139,51 @@ class BridgeTest(unittest.TestCase):
         c.settimeout(3)
         c.sendall(b'boot noise\n{"t":"hello","v":1,"fw":"test","board":"sim","w":240,"h":320}\n')
         f = c.makefile("r")
-        msgs = [json.loads(f.readline()) for _ in range(3)]
+
+        def read():  # skip the settings query the bridge sends after each hello
+            while True:
+                m = json.loads(f.readline())
+                if m["t"] != "cfg":
+                    return m
+
+        msgs = [read() for _ in range(3)]
         self.assertEqual([m["t"] for m in msgs], ["hi", "clr", "s"])
         self.assertEqual(msgs[2]["name"], "before")
         at.STORE.upsert("claude:pre", state="done")
-        self.assertEqual(json.loads(f.readline())["st"], "done")
+        self.assertEqual(read()["st"], "done")
         c.sendall(b'{"t":"ack","id":"claude:pre"}\n')
-        self.assertEqual(json.loads(f.readline())["ack"], 1)
+        self.assertEqual(read()["ack"], 1)
         c.close()
+
+    def post(self, path, body, headers=None):
+        h = {"Content-Type": "application/json"}
+        h.update(headers or {})
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=body, headers=h)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers
+
+    def test_cross_site_requests_are_blocked(self):
+        ev = json.dumps({"source": "x", "id": "1", "state": "working"}).encode()
+        # a "simple" cross-site form/text post never gets in
+        self.assertEqual(self.post("/api/event", ev, {"Content-Type": "text/plain"})[0], 415)
+        self.assertEqual(self.post("/api/event", ev, {"Origin": "https://evil.example"})[0], 403)
+        code, h = self.post("/api/event", ev, {"Origin": "https://ibrahim-dogan.github.io"})
+        self.assertEqual((code, h["Access-Control-Allow-Origin"]), (200, "https://ibrahim-dogan.github.io"))
+        self.assertEqual(self.post("/api/event", ev, {"Origin": "http://127.0.0.1:8765"})[0], 200)
+        pre = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/event", method="OPTIONS",
+                                     headers={"Origin": "https://ibrahim-dogan.github.io",
+                                              "Access-Control-Request-Private-Network": "true"})
+        with urllib.request.urlopen(pre) as r:
+            self.assertEqual(r.headers["Access-Control-Allow-Private-Network"], "true")
+
+    def test_serial_release_for_the_web_flasher(self):
+        self.assertEqual(self.post("/api/serial/release", b'{"seconds": 30}')[0], 200)
+        self.assertTrue(at.serial_paused())
+        self.assertEqual(self.post("/api/serial/resume", b"{}")[0], 200)
+        self.assertFalse(at.serial_paused())
 
     def test_interrupt_detection(self):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as t:

@@ -170,6 +170,7 @@ footer { padding: 36px 0 60px; color: var(--dim); font-size: 14px; border-top: 1
         <span slot="not-allowed" class="note">The installer needs a secure (https) page.</span>
       </esp-web-install-button>
       <span class="note" id="fwinfo">Firmware v0.1.0</span>
+      <span class="note" id="flash-note" hidden style="flex-basis:100%">The bridge is running: it lets go of the USB port while you install and reconnects afterwards.</span>
     </div>
     <div class="callout"><b>Port not showing up?</b> Most boards use a CH340 USB-serial chip: macOS and Linux include a driver, Windows may need the <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html">WCH CH340 driver</a>. On dual-USB boards use a USB-A to USB-C cable: the board's USB-C port lacks the resistors that C-to-C cables need.</div>
   </section>
@@ -194,7 +195,7 @@ curl -fsSL https://raw.githubusercontent.com/ibrahim-dogan/agent-tally/main/host
 
   <section id="tools" class="offline">
     <h2><span class="n">03</span>Device tools</h2>
-    <p class="sub">Talk to the display straight from this page: check the colours, tune brightness or send fake sessions to see it work before the bridge is set up. Stop the bridge first so the serial port is free: <code>python3 ~/.agent-tally/agenttally.py service stop</code> (and <code>service start</code> afterwards).</p>
+    <p class="sub">Check the colours, tune brightness or send fake sessions to see the display work. <span id="mode-note">Looking for the bridge on this computer…</span></p>
     <div class="tools">
       <div class="status">
         <button class="btn primary" id="connect" style="width:100%;justify-content:center;margin-bottom:12px">Connect to display</button>
@@ -283,46 +284,119 @@ document.querySelectorAll(".copy").forEach(b => b.addEventListener("click", () =
   navigator.clipboard.writeText(el.textContent.trim()).then(() => { b.textContent = "Copied"; setTimeout(() => b.textContent = "Copy", 1500); });
 }));
 
-// ---- Web Serial device tools
+// ---- Device tools: through the bridge when it runs, else straight over Web Serial
 const $ = id => document.getElementById(id);
 const toolsSection = $("tools");
+const BRIDGE = "http://127.0.0.1:47321";
+let bridge = false, bridgeTimer = null;
 let port = null, writer = null, pingTimer = null, whoTimer = null, linked = false;
 const enc = new TextEncoder();
+const nowTz = () => ({ now: Math.floor(Date.now() / 1000), tz: -new Date().getTimezoneOffset() * 60 });
 
 function log(msg) {
   const el = $("log");
   el.textContent += msg + "\n";
   el.scrollTop = el.scrollHeight;
 }
+function setStatus(s) { $("st-status").textContent = s; }
 
-async function send(obj) {
+async function api(path, body) {
+  const r = await fetch(BRIDGE + path, body === undefined ? { signal: AbortSignal.timeout(2000) } : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    signal: AbortSignal.timeout(2000),
+  });
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  return r.json();
+}
+
+// Every setting change goes through here, whichever way we are connected.
+async function cfg(obj) {
+  if (bridge) return api("/api/device", obj).catch(e => log(e.message));
+  return sendSerial(Object.assign({ t: "cfg" }, obj));
+}
+
+function showDevice(d) {
+  $("st-board").textContent = d.board || "–"; $("st-panel").textContent = d.panel || "–";
+  $("st-fw").textContent = d.fw || "–"; $("st-size").textContent = d.w ? `${d.w}×${d.h}` : "–";
+  const c = d.cfg;
+  if (c) {
+    $("brightness").value = c.brightness;
+    $("gamma").value = c.gamma ?? 0;
+    document.querySelectorAll("[data-cfg]").forEach(el => { if (el.dataset.cfg in c) el.checked = !!c[el.dataset.cfg]; });
+  }
+}
+
+// ---- bridge mode
+async function pollBridge() {
+  try {
+    const j = await api("/api/device");
+    const d = (j.devices || []).find(x => x.kind === "serial") || (j.devices || [])[0];
+    if (j.serial_paused) { setStatus("bridge paused for a firmware update"); return; }
+    if (!d) { setStatus("bridge running, no display found"); toolsSection.classList.add("offline"); return; }
+    setStatus("connected through the bridge");
+    toolsSection.classList.remove("offline");
+    showDevice(d);
+  } catch (e) { setStatus("bridge not reachable"); }
+}
+
+async function detectBridge() {
+  try {
+    const h = await api("/api/health");
+    bridge = true;
+    $("connect").textContent = "Using the bridge";
+    $("connect").disabled = true;
+    $("mode-note").textContent = `The bridge (v${h.version}) is running, so these controls go through it and the display keeps showing your sessions.`;
+    $("flash-note").hidden = false;
+    pollBridge();
+    bridgeTimer = setInterval(pollBridge, 3000);
+  } catch (e) {
+    bridge = false;
+    $("mode-note").textContent = "No bridge found on this computer: connect to the display over USB instead.";
+  }
+}
+detectBridge();
+
+// While ESP Web Tools installs, the bridge must let go of the serial port.
+let releaseTimer = null;
+async function releaseSerial() {
+  if (!bridge || releaseTimer) return;
+  const release = () => api("/api/serial/release", { seconds: 90 }).catch(e => log(e.message));
+  await release();
+  log("bridge released the serial port for the installer");
+  let seenDialog = false;
+  releaseTimer = setInterval(async () => {
+    const open = !!document.querySelector("ewt-install-dialog");
+    seenDialog = seenDialog || open;
+    if (open) { release(); return; }
+    if (!seenDialog) return;  // the port chooser is still up
+    clearInterval(releaseTimer); releaseTimer = null;
+    await api("/api/serial/resume", {}).catch(() => {});
+    log("installer closed, bridge reconnects to the display");
+  }, 3000);
+}
+installer.querySelector('[slot="activate"]').addEventListener("click", releaseSerial, true);
+
+// ---- direct Web Serial mode
+async function sendSerial(obj) {
   if (!writer) return;
   await writer.write(enc.encode(JSON.stringify(obj) + "\n"));
 }
 
-function setStatus(s) { $("st-status").textContent = s; }
-
 function onMessage(m) {
   if (m.t === "hello") {
-    $("st-board").textContent = m.board; $("st-panel").textContent = m.panel;
-    $("st-fw").textContent = m.fw; $("st-size").textContent = `${m.w}×${m.h}`;
+    showDevice(m);
     if (!linked) {
       linked = true; clearInterval(whoTimer);
-      setStatus("connected"); toolsSection.classList.remove("offline");
-      hi(); send({ t: "cfg" });
+      setStatus("connected over USB"); toolsSection.classList.remove("offline");
+      sendSerial(Object.assign({ t: "hi", v: 1, host: "web tools" }, nowTz()));
+      sendSerial({ t: "cfg" });
     }
   } else if (m.t === "cfg") {
-    $("brightness").value = m.brightness;
-    $("gamma").value = m.gamma ?? 0;
-    document.querySelectorAll("[data-cfg]").forEach(c => { if (c.dataset.cfg in m) c.checked = !!m[c.dataset.cfg]; });
+    showDevice({ board: $("st-board").textContent, panel: $("st-panel").textContent, fw: $("st-fw").textContent, cfg: m,
+                 w: +($("st-size").textContent.split("×")[0]) || 0, h: +($("st-size").textContent.split("×")[1]) || 0 });
   } else if (m.t === "log") {
     log(m.m);
   }
-}
-
-function hi() {
-  const now = Math.floor(Date.now() / 1000), tz = -new Date().getTimezoneOffset() * 60;
-  send({ t: "hi", v: 1, host: "web tools", now, tz });
 }
 
 async function readLoop() {
@@ -353,6 +427,7 @@ function disconnected() {
 }
 
 $("connect").addEventListener("click", async () => {
+  if (bridge) return;
   if (!("serial" in navigator)) { log("Web Serial is not available in this browser (use Chrome or Edge)."); return; }
   if (port) { try { await port.close(); } catch (e) {} disconnected(); return; }
   try {
@@ -364,30 +439,49 @@ $("connect").addEventListener("click", async () => {
   $("connect").textContent = "Disconnect";
   setStatus("waiting for the display…");
   readLoop();
-  whoTimer = setInterval(() => send({ t: "who", v: 1 }), 1500);
-  send({ t: "who", v: 1 });
-  pingTimer = setInterval(() => { if (linked) send({ t: "ping", now: Math.floor(Date.now() / 1000), tz: -new Date().getTimezoneOffset() * 60 }); }, 5000);
+  whoTimer = setInterval(() => sendSerial({ t: "who", v: 1 }), 1500);
+  sendSerial({ t: "who", v: 1 });
+  pingTimer = setInterval(() => { if (linked) sendSerial(Object.assign({ t: "ping" }, nowTz())); }, 5000);
 });
+// a page left open must not keep the port from the bridge
+window.addEventListener("pagehide", () => { if (port) port.close().catch(() => {}); });
 
+// ---- controls
 let brightTimer;
-$("brightness").addEventListener("input", e => { clearTimeout(brightTimer); brightTimer = setTimeout(() => send({ t: "cfg", brightness: +e.target.value }), 120); });
-$("gamma").addEventListener("change", e => send({ t: "cfg", gamma: +e.target.value }));
-$("panel").addEventListener("change", e => { send({ t: "cfg", panel: +e.target.value }); log("restarting with the new panel driver…"); linked = false; whoTimer = setInterval(() => send({ t: "who", v: 1 }), 1500); });
-document.querySelectorAll("[data-cfg]").forEach(c => c.addEventListener("change", () => send({ t: "cfg", [c.dataset.cfg]: c.checked ? 1 : 0 })));
+$("brightness").addEventListener("input", e => { clearTimeout(brightTimer); brightTimer = setTimeout(() => cfg({ brightness: +e.target.value }), 120); });
+$("gamma").addEventListener("change", e => cfg({ gamma: +e.target.value }));
+$("panel").addEventListener("change", e => {
+  cfg({ panel: +e.target.value }); log("restarting with the new panel driver…");
+  if (!bridge) { linked = false; whoTimer = setInterval(() => sendSerial({ t: "who", v: 1 }), 1500); }
+});
+document.querySelectorAll("[data-cfg]").forEach(c => c.addEventListener("change", () => cfg({ [c.dataset.cfg]: c.checked ? 1 : 0 })));
 
-$("test").addEventListener("click", () => send({ t: "cfg", test: 1 }));
-$("clear").addEventListener("click", () => { send({ t: "cfg", test: 0 }); send({ t: "clr" }); });
+const DEMO = [
+  { id: "w1", name: "agent-tally", st: "waiting", det: "Allow $ pio run -t upload?", age: 12, pr: "flash the new firmware", cwd: "~/code/agent-tally" },
+  { id: "w2", name: "web-shop", st: "done", ack: 0, det: "All 48 tests pass.", age: 64, pr: "fix the flaky checkout test", rp: "The retry test shared a mock clock between tests. I isolated it per test; all 48 tests pass now.", cwd: "~/code/web-shop" },
+  { id: "w3", name: "api-gateway", st: "working", det: "Edit routes.ts", age: 140, sub: 2, pr: "add rate limiting", cwd: "~/work/api-gateway" },
+  { id: "w4", name: "infra", src: "codex", st: "working", det: "$ terraform plan", age: 300, cwd: "~/work/infra" },
+  { id: "w5", name: "notes", st: "idle", det: "Waiting for your next prompt", age: 1800, cwd: "~/notes" },
+];
+$("test").addEventListener("click", () => cfg({ test: 1 }));
 $("demo").addEventListener("click", async () => {
-  const demo = [
-    { id: "w1", name: "agent-tally", st: "waiting", det: "Allow $ pio run -t upload?", age: 12, pr: "flash the new firmware", cwd: "~/code/agent-tally" },
-    { id: "w2", name: "web-shop", st: "done", ack: 0, det: "All 48 tests pass.", age: 64, pr: "fix the flaky checkout test", rp: "The retry test shared a mock clock between tests. I isolated it per test; all 48 tests pass now.", cwd: "~/code/web-shop" },
-    { id: "w3", name: "api-gateway", st: "working", det: "Edit routes.ts", age: 140, sub: 2, pr: "add rate limiting", cwd: "~/work/api-gateway" },
-    { id: "w4", name: "infra", src: "codex", st: "working", det: "$ terraform plan", age: 300, cwd: "~/work/infra" },
-    { id: "w5", name: "notes", st: "idle", det: "Waiting for your next prompt", age: 1800, cwd: "~/notes" },
-  ];
-  await send({ t: "cfg", test: 0 });
-  await send({ t: "clr" });
-  for (const s of demo) await send(Object.assign({ t: "s", src: "claude", sub: 0, ack: 1, rp: "", pr: "" }, s, { id: "demo:" + s.id }));
+  await cfg({ test: 0 });
+  if (bridge) {
+    // the demo cards join your real sessions; "Clear screen" removes only them
+    await api("/api/event", DEMO.map(d => ({ source: "demo", id: d.id, title: d.name, state: d.st, detail: d.det, cwd: d.cwd,
+      prompt: d.pr, reply: d.rp, sub: d.sub, age: d.age }))).catch(e => log(e.message));
+    return;
+  }
+  await sendSerial({ t: "clr" });
+  for (const d of DEMO) await sendSerial(Object.assign({ t: "s", src: "claude", sub: 0, ack: 1, rp: "", pr: "" }, d, { id: "demo:" + d.id }));
+});
+$("clear").addEventListener("click", async () => {
+  await cfg({ test: 0 });
+  if (bridge) {
+    await api("/api/event", DEMO.map(d => ({ source: "demo", id: d.id, state: "ended" }))).catch(e => log(e.message));
+    return;
+  }
+  sendSerial({ t: "clr" });
 });
 </script>
 </body>
