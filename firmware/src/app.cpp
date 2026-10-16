@@ -178,7 +178,7 @@ float App::pulse(uint32_t periodMs) const {
 }
 
 bool App::animating() const {
-  if (touching_) return true;
+  if (touching_ || ledTestUntil_) return true;
   for (auto& s : sess_)
     if (s.used && (s.st == ST_WAITING || s.st == ST_WORKING)) return true;
   return false;
@@ -186,7 +186,29 @@ bool App::animating() const {
 
 // The LED also feeds the light bar on the stand's bezel, so it shows every state:
 // needs you = red breathing, done = steady green, working = slow dim amber.
+// 0 steady, 1 breathe, 2 slow breathe, 3 fast pulse, 4 double blink, 5 blink
+float App::ledPattern(int pat) const {
+  uint32_t t = hal_.ms();
+  switch (pat) {
+    case 1: return 0.08f + 0.92f * pulse(2000);
+    case 2: return 0.12f + 0.88f * pulse(4000);
+    case 3: return 0.05f + 0.95f * pulse(700);
+    case 4: { uint32_t p = t % 1600; return (p < 140 || (p >= 300 && p < 440)) ? 1.0f : 0.0f; }
+    case 5: return (t % 1600) < 800 ? 1.0f : 0.0f;
+    default: return 1.0f;
+  }
+}
+
 void App::updateLed() {
+  if (ledTestUntil_) {
+    if ((int32_t)(hal_.ms() - ledTestUntil_) < 0) {
+      float k = ledPattern(ledTestPat_);
+      hal_.led((uint8_t)(ledTest_[0] * k), (uint8_t)(ledTest_[1] * k), (uint8_t)(ledTest_[2] * k));
+      return;
+    }
+    ledTestUntil_ = 0;
+    if (screen_ == SCR_LEDTEST) { screen_ = SCR_LIST; dirty_ = true; }
+  }
   if (!cfg_.led) { hal_.led(0, 0, 0); return; }
   int working = 0;
   for (auto& s : sess_)
@@ -355,6 +377,17 @@ void App::handleLine(char* line) {
     if (doc["beep"].is<int>()) hal_.tone(1760, 120);
     if (doc["panel"].is<int>()) hal_.setPanel(doc["panel"].as<int>());
     if (doc["test"].is<int>()) { screen_ = doc["test"].as<int>() ? SCR_TEST : SCR_LIST; dirty_ = true; }
+    if (doc["led_rgb"].is<JsonArrayConst>()) {
+      JsonArrayConst c = doc["led_rgb"].as<JsonArrayConst>();
+      for (int i = 0; i < 3; i++) ledTest_[i] = c[i] | 0;
+      ledTestPat_ = doc["led_pat"] | 0;
+      ledTestUntil_ = now + (uint32_t)(doc["led_ms"] | 20000);
+      copyUtf8(ledTestLabel_, sizeof ledTestLabel_, doc["led_label"] | "");
+      screen_ = SCR_LEDTEST;
+      dirty_ = true;
+    } else if (doc["led_rgb"].is<int>()) {  // led_rgb: 0 ends the test
+      ledTestUntil_ = now;
+    }
     if (disp) hal_.applyDisplay(cfg_);
     if (pal) setupPalette();
     if (any) { hal_.save(cfg_); lastActivity_ = now; dirty_ = true; }
@@ -434,6 +467,8 @@ void App::onTap(int x, int y) {
     }
   } else if (screen_ == SCR_TEST) {
     screen_ = SCR_SETTINGS;
+  } else if (screen_ == SCR_LEDTEST) {
+    ledTestUntil_ = hal_.ms();
   } else if (screen_ == SCR_DETAIL) {
     if (y < S(40)) screen_ = SCR_LIST;
   } else if (screen_ == SCR_SETTINGS) {
@@ -541,6 +576,9 @@ void App::drawScreen() {
       break;
     case SCR_TEST:
       drawTest();
+      break;
+    case SCR_LEDTEST:
+      drawLedTest();
       break;
   }
 }
@@ -869,4 +907,20 @@ void App::drawTest() {
     uint16_t tc = (i == 3 || i == 4) ? 0x0000 : 0xFFFF;
     p_.text(fBody_, S(10), y + (bh - fBody_->height) / 2, bars[i].name, tc);
   }
+}
+
+// Big label + swatch so the person at the desk can say "number 3 looked best".
+void App::drawLedTest() {
+  static const char* pats[] = {"steady", "breathe", "slow breathe", "fast pulse", "double blink", "blink"};
+  p_.textCenter(fSmall_, W_ / 2, S(16), "LED TEST \xC2\xB7 tap to stop", cMuted_);
+  uint16_t sw = rgb(ledTest_[0], ledTest_[1], ledTest_[2]);
+  if (cfg_.swaprb) sw = rgb(ledTest_[2], ledTest_[1], ledTest_[0]);
+  int cy = H_ / 2 - S(30);
+  float k = ledPattern(ledTestPat_);
+  p_.circle(W_ / 2, cy, S(46), cLine_);
+  p_.circle(W_ / 2, cy, S(44), mix(cBg_, sw, (uint8_t)(40 + 215 * k)));
+  p_.textCenter(fHuge_, W_ / 2, cy + S(58), ledTestLabel_, cText_);
+  char b[48];
+  snprintf(b, sizeof b, "%s \xC2\xB7 %d %d %d", pats[ledTestPat_ < 6 ? ledTestPat_ : 0], ledTest_[0], ledTest_[1], ledTest_[2]);
+  p_.textCenter(fSmall_, W_ / 2, cy + S(58) + fHuge_->height + S(6), b, cMuted_);
 }

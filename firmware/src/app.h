@@ -61,7 +61,7 @@ struct Session {
   bool ack = true;
 };
 
-enum Screen : uint8_t { SCR_LIST, SCR_DETAIL, SCR_SETTINGS, SCR_TEST };
+enum Screen : uint8_t { SCR_LIST, SCR_DETAIL, SCR_SETTINGS, SCR_TEST, SCR_LEDTEST };
 
 class App {
  public:
@@ -123,6 +123,13 @@ class App {
   int lastWaiting_ = 0, lastDone_ = 0;
   uint32_t flashUntil_ = 0;
 
+  // LED test: the host drives the LED directly (colour + pattern) to try how
+  // colours read through the light pipe. Ends on its own after led_ms.
+  uint8_t ledTest_[3] = {0, 0, 0};
+  uint8_t ledTestPat_ = 0;
+  uint32_t ledTestUntil_ = 0;
+  char ledTestLabel_[40] = "";
+
   void setupPalette();
   void pollLink();
   void handleLine(char* s);
@@ -152,6 +159,8 @@ class App {
   void drawDetail();
   void drawSettings();
   void drawTest();
+  void drawLedTest();
+  float ledPattern(int pat) const;
   void drawStatusIcon(State st, int cx, int cy, int r);
   void drawToggle(int x, int y, bool on);
   void drawBack(const char* title);
