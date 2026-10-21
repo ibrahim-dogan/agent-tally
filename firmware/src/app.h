@@ -134,6 +134,7 @@ class App {
   uint8_t alertRgb_[3] = {0, 0, 0};
   uint32_t beatStart_ = 0, alertUntil_ = 0;
   bool frameOn_ = false;
+  char alertId_[41] = "";  // the session that raised the alert: its card pulses too
 
   uint8_t ledTest_[3] = {0, 0, 0};
   uint8_t ledTestPat_ = 0;

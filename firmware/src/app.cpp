@@ -163,11 +163,9 @@ void App::counts(int& waiting, int& done, int& working, int& idle) {
 void App::onStateChange(int waiting, int done) {
   if (waiting > lastWaiting_) {
     lastActivity_ = hal_.ms();
-    startAlert(cWait_, 255, 0, 0);
     if (cfg_.sound) { hal_.tone(1760, 70); hal_.tone(2349, 90); }
   } else if (done > lastDone_) {
     lastActivity_ = hal_.ms();
-    startAlert(cDone_, 0, 255, 0);
     if (cfg_.sound) hal_.tone(1318, 60);
   }
   lastWaiting_ = waiting;
@@ -393,6 +391,13 @@ void App::handleLine(char* line) {
     copyUtf8(s->rp, sizeof s->rp, doc["rp"] | "");
     s->sub = doc["sub"] | 0;
     s->ack = (doc["ack"] | 1) != 0;
+    // A session that starts waiting for you, or just finished, raises an alert:
+    // frame, LED and its own card pulse together.
+    if (changed && (st == ST_WAITING || (st == ST_DONE && !s->ack))) {
+      copyUtf8(alertId_, sizeof alertId_, s->id);
+      if (st == ST_WAITING) startAlert(cWait_, 255, 0, 0);
+      else startAlert(cDone_, 0, 255, 0);
+    }
     // A finished session that is already open on screen counts as seen.
     if (screen_ == SCR_DETAIL && !s->ack && !strcmp(detailId_, s->id) && st == ST_DONE) ackSession(s);
     dirty_ = true;
@@ -742,6 +747,13 @@ void App::drawCard(const Session& s, int y, int h) {
   uint16_t bg = cCard_;
   if (s.st == ST_WAITING) bg = mix(cCard_, cWait_, 22 + (uint8_t)(22 * beat()));
   else if (s.st == ST_DONE && !s.ack) bg = mix(cCard_, cDone_, 24);
+  bool alerting = (int32_t)(hal_.ms() - alertUntil_) < 0 && !strcmp(alertId_, s.id);
+  if (alerting) {
+    // glowing outline + tinted card, on the shared beat
+    float k = beat();
+    p_.rrect(x - S(3), y - S(3), w + S(6), h + S(6), S(13), mix(cBg_, frameColor_, (uint8_t)(255 * k)));
+    bg = mix(bg, frameColor_, (uint8_t)(70 * k));
+  }
   p_.rrect(x, y, w, h, S(10), bg);
   uint16_t col = stateColor(s.st);
   p_.rrect(x + S(6), y + S(10), S(4), h - S(20), S(2), col);
