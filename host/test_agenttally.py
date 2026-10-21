@@ -185,6 +185,23 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(self.post("/api/serial/resume", b"{}")[0], 200)
         self.assertFalse(at.serial_paused())
 
+    def test_title_comes_from_the_transcript(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as t:
+            t.write(json.dumps({"type": "user", "message": {"content": "hi"}}) + "\n")
+        self.hook(hook_event_name="SessionStart", source="startup", transcript_path=t.name)
+        self.assertEqual(self.session()["name"], "çiçek-app")  # no title yet: folder name
+        with open(t.name, "a") as f:
+            f.write(json.dumps({"type": "ai-title", "aiTitle": "Fix the login bug"}) + "\n")
+        at._TITLE_CACHE.clear()
+        self.hook(hook_event_name="PreToolUse", tool_name="Read", tool_input={}, transcript_path=t.name)
+        self.assertEqual(self.session()["name"], "Fix the login bug")
+        with open(t.name, "a") as f:  # /rename wins over the generated title
+            f.write(json.dumps({"type": "custom-title", "customTitle": "Login v2"}) + "\n")
+            f.write(json.dumps({"type": "ai-title", "aiTitle": "Fix the login bug"}) + "\n")
+        at._TITLE_CACHE.clear()
+        self.hook(hook_event_name="PreToolUse", tool_name="Read", tool_input={}, transcript_path=t.name)
+        self.assertEqual(self.session()["name"], "Login v2")
+
     def test_interrupt_detection(self):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as t:
             t.write(json.dumps({"type": "assistant", "message": {"content": []}}) + "\n")

@@ -265,11 +265,56 @@ def pid_is_agent(pid):
     return "claude" in out or "node" in out
 
 
+_TITLE_CACHE = {}  # transcript path -> (checked_at, mtime, (custom, ai))
+
+
+def transcript_titles(path):
+    """(custom, ai) titles Claude Code wrote into the transcript: the terminal tab title.
+
+    `custom-title` comes from /rename, `ai-title` is generated automatically. Both
+    repeat through the file, so the tail usually has them; read the whole file
+    once if it doesn't. Cached, and re-read at most every 5 s when the file changed.
+    """
+    if not path:
+        return (None, None)
+    now = time.time()
+    hit = _TITLE_CACHE.get(path)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return hit[2] if hit else (None, None)
+    if hit and (hit[1] == mtime or now - hit[0] < 5):
+        return hit[2]
+    found = {"custom-title": None, "ai-title": None}
+    try:
+        with open(path, "rb") as f:
+            size = f.seek(0, 2)
+            for start in ([max(0, size - 262144)] + ([0] if size > 262144 else [])):
+                f.seek(start)
+                for raw in f.read().splitlines():
+                    if b'-title"' not in raw:
+                        continue
+                    try:
+                        d = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if d.get("type") == "custom-title" and d.get("customTitle"):
+                        found["custom-title"] = d["customTitle"]
+                    elif d.get("type") == "ai-title" and d.get("aiTitle"):
+                        found["ai-title"] = d["aiTitle"]
+                if found["custom-title"] or found["ai-title"]:
+                    break
+    except OSError:
+        pass
+    titles = (found["custom-title"], found["ai-title"])
+    _TITLE_CACHE[path] = (now, mtime, titles)
+    return titles
+
+
 def claude_title(payload, cwd):
-    title = payload.get("session_title")
-    if title:
-        return title
-    return os.path.basename(cwd.rstrip("/")) or cwd or "claude"
+    """Same name as the terminal tab: /rename title, then Claude's own title, then the folder."""
+    custom, ai = transcript_titles(payload.get("transcript_path"))
+    return custom or payload.get("session_title") or ai or os.path.basename(cwd.rstrip("/")) or cwd or "claude"
 
 
 def handle_claude_hook(payload, pid_hint=0):
@@ -281,8 +326,7 @@ def handle_claude_hook(payload, pid_hint=0):
     cwd = payload.get("cwd") or ""
     cur = STORE.get(sid)
     base = {"src": "claude", "cwd": cwd, "transcript": payload.get("transcript_path") or None}
-    if cur is None or cur.get("name") in (None, "", sid) or payload.get("session_title"):
-        base["name"] = claude_title(payload, cwd)
+    base["name"] = claude_title(payload, cwd)
     if pid_hint and (cur is None or cur.get("pid") != pid_hint) and pid_is_agent(pid_hint):
         base["pid"] = pid_hint
 
@@ -801,6 +845,11 @@ def sweeper(stop, done_to_idle_min):
                 log(f"{s['id']}: process {s['pid']} gone")
                 STORE.remove(s["id"])
                 continue
+            # keep names in step with the terminal title (/rename, or Claude's own title)
+            if s["src"] == "claude" and s.get("transcript"):
+                title = claude_title({"transcript_path": s["transcript"]}, s.get("cwd") or "")
+                if title and title != s.get("name"):
+                    STORE.upsert(s["id"], name=title, quiet=True)
             if s["src"] == "claude" and s["state"] in ("working", "waiting") and now - s["updated"] > 4:
                 if transcript_interrupted(s.get("transcript"), s["updated"] - 1):
                     STORE.upsert(s["id"], state="idle", detail="Interrupted", event="interrupted")
