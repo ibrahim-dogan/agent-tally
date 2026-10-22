@@ -512,23 +512,96 @@ def _ps(pid, fields):
 
 
 def terminal_of(pid):
-    """(tty device, .app bundle path) of the terminal a process runs in."""
+    """(tty device, .app bundle path, background?) of the terminal a process runs in.
+
+    Claude Code's own ClaudeCode.app is skipped: it hosts background sessions
+    (`claude --bg`), which have a pty but no terminal window.
+    """
     tty = _ps(pid, "tty")
     tty = "/dev/" + tty if tty and tty not in ("??", "-") else None
-    bundle, p = None, pid
+    bundle, background, p = None, False, pid
     for _ in range(25):
-        line = _ps(p, "ppid,comm")
+        line = _ps(p, "ppid,command")
         if not line:
             break
-        ppid, _, comm = line.strip().partition(" ")
-        m = re.search(r"^(.*?\.app)/Contents/MacOS/", comm.strip())
-        if m:
+        ppid, _, cmd = line.strip().partition(" ")
+        cmd = cmd.strip()
+        if "--bg-pty-host" in cmd:
+            background = True
+        m = re.search(r"^(.*?\.app)/Contents/MacOS/", cmd)
+        if m and not m.group(1).endswith("/ClaudeCode.app"):
             bundle = m.group(1)
             break
         p = int(ppid)
         if p <= 1:
             break
-    return tty, bundle
+    return tty, bundle, background
+
+
+def attached_client(session_id, title):
+    """pid of a `claude attach ...` process showing this background session, if any."""
+    out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=3).stdout
+    short = session_id[:8]
+    for line in out.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        args = cmd.split()
+        # only real `claude attach <id|name>` clients, not any command line that mentions them
+        if len(args) < 3 or os.path.basename(args[0]) != "claude" or args[1] != "attach":
+            continue
+        target = " ".join(args[2:]).strip("'\"")
+        if target and (short in target or (title and target.lower() in title.lower())):
+            return int(pid)
+    return None
+
+
+def focus_tty(tty, bundle):
+    """Select the tab showing `tty` in iTerm2 / Terminal. Returns ok, message or None."""
+    app = os.path.basename(bundle)[:-4]
+    script = None
+    if tty and "iterm" in app.lower():
+        script = ITERM_FOCUS % tty
+    elif tty and app == "Terminal":
+        script = TERMINAL_FOCUS % tty
+    if not script:
+        return None
+    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=8)
+    if r.stdout.strip() == "ok":
+        return True, app
+    dbg("focus:", r.stdout.strip(), r.stderr.strip()[:200])
+    if "not allowed" in r.stderr or "-1743" in r.stderr:
+        return False, "allow automation"
+    return None
+
+
+ITERM_NEW_TAB = """
+tell application id "com.googlecode.iterm2"
+  activate
+  if (count of windows) = 0 then
+    create window with default profile
+  else
+    tell current window to create tab with default profile
+  end if
+  tell current session of current window to write text "%s"
+  return "ok"
+end tell
+"""
+
+TERMINAL_NEW_TAB = """
+tell application "Terminal"
+  activate
+  do script "%s"
+  return "ok"
+end tell
+"""
+
+
+def open_attach_tab(session_id):
+    """Open a new terminal tab that attaches to a background session."""
+    cmd = f"claude attach {session_id}"
+    iterm = subprocess.run(["osascript", "-e", 'id of application "iTerm"'], capture_output=True, text=True).returncode == 0
+    script = (ITERM_NEW_TAB if iterm else TERMINAL_NEW_TAB) % cmd
+    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=8)
+    return r.stdout.strip() == "ok", ("iTerm" if iterm else "Terminal") + " attach"
 
 
 def focus_session(sid):
@@ -538,25 +611,28 @@ def focus_session(sid):
         return False, "unknown process"
     if sys.platform != "darwin":
         return False, "macOS only"
-    tty, bundle = terminal_of(s["pid"])
+    tty, bundle, background = terminal_of(s["pid"])
+    if background:
+        # A `claude --bg` session: show the tab it is attached in, or attach it in a new one.
+        raw_id = s["id"].split(":", 1)[-1]
+        client = attached_client(raw_id, s.get("name") or "")
+        if client:
+            ctty, cbundle, _ = terminal_of(client)
+            res = focus_tty(ctty, cbundle) if cbundle else None
+            if res:
+                return res
+            if cbundle:
+                r = subprocess.run(["open", "-a", cbundle], capture_output=True, timeout=8)
+                return r.returncode == 0, os.path.basename(cbundle)[:-4]
+        return open_attach_tab(raw_id)
     if not bundle:
         return False, "no app"
-    app = os.path.basename(bundle)[:-4]
-    script = None
-    if tty and "iterm" in app.lower():
-        script = ITERM_FOCUS % tty
-    elif tty and app == "Terminal":
-        script = TERMINAL_FOCUS % tty
-    if script:
-        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=8)
-        if r.stdout.strip() == "ok":
-            return True, app
-        dbg("focus:", r.stdout.strip(), r.stderr.strip()[:200])
-        if "not allowed" in r.stderr or "-1743" in r.stderr:
-            return False, "allow automation"
+    res = focus_tty(tty, bundle)
+    if res:
+        return res
     # other terminals / IDEs: at least bring the app forward
     r = subprocess.run(["open", "-a", bundle], capture_output=True, timeout=8)
-    return r.returncode == 0, app
+    return r.returncode == 0, os.path.basename(bundle)[:-4]
 
 
 # ---------------------------------------------------------------- device protocol
