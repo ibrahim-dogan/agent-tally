@@ -60,6 +60,7 @@ struct Session {
   uint32_t orderMs = 0;  // actMs as of the last re-sort: keeps the list calm
   uint8_t sub = 0;
   bool ack = true;
+  bool focusable = false;  // the bridge can bring its terminal tab to the front
 };
 
 enum Screen : uint8_t { SCR_LIST, SCR_DETAIL, SCR_SETTINGS, SCR_TEST, SCR_LEDTEST };
@@ -134,7 +135,13 @@ class App {
   uint8_t alertRgb_[3] = {0, 0, 0};
   uint32_t beatStart_ = 0, alertUntil_ = 0;
   bool frameOn_ = false;
-  char alertId_[41] = "";  // the session that raised the alert: its card pulses too
+  char alertId_[41] = "";
+
+  // Focus button on the detail screen: 0 idle, 1 waiting for the bridge, 2 ok, 3 failed
+  uint8_t focusState_ = 0;
+  uint32_t focusAt_ = 0;
+  char focusMsg_[28] = "";
+  int focusBtnX_ = 0;  // the session that raised the alert: its card pulses too
 
   uint8_t ledTest_[3] = {0, 0, 0};
   uint8_t ledTestPat_ = 0;

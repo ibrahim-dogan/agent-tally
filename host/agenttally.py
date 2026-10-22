@@ -221,6 +221,14 @@ class Store:
             if self.sessions.pop(sid, None) is not None:
                 self._emit("remove", sid)
 
+    def resolve(self, wire_id):
+        """Display ids are cut to 40 characters; map one back to the full session id."""
+        with self.lock:
+            if wire_id in self.sessions:
+                return wire_id
+            hits = [k for k in self.sessions if k.startswith(wire_id)] if len(wire_id) >= 40 else []
+            return hits[0] if len(hits) == 1 else wire_id
+
     def ack(self, sid):
         with self.lock:
             s = self.sessions.get(sid)
@@ -459,6 +467,98 @@ def handle_codex_notify(payload):
                     "reply": payload.get("last-assistant-message") or ""})
 
 
+# ---------------------------------------------------------------- focus the session's terminal
+
+ITERM_FOCUS = """
+tell application id "com.googlecode.iterm2"
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        if tty of s is "%s" then
+          tell w to select
+          tell t to select
+          tell s to select
+          activate
+          return "ok"
+        end if
+      end repeat
+    end repeat
+  end repeat
+  return "notfound"
+end tell
+"""
+
+TERMINAL_FOCUS = """
+tell application "Terminal"
+  repeat with w in windows
+    repeat with t in tabs of w
+      if tty of t is "%s" then
+        set selected of t to true
+        set index of w to 1
+        activate
+        return "ok"
+      end if
+    end repeat
+  end repeat
+  return "notfound"
+end tell
+"""
+
+
+def _ps(pid, fields):
+    spec = ",".join(f + "=" for f in fields.split(","))
+    out = subprocess.run(["ps", "-o", spec, "-p", str(pid)], capture_output=True, text=True, timeout=2)
+    return out.stdout.strip()
+
+
+def terminal_of(pid):
+    """(tty device, .app bundle path) of the terminal a process runs in."""
+    tty = _ps(pid, "tty")
+    tty = "/dev/" + tty if tty and tty not in ("??", "-") else None
+    bundle, p = None, pid
+    for _ in range(25):
+        line = _ps(p, "ppid,comm")
+        if not line:
+            break
+        ppid, _, comm = line.strip().partition(" ")
+        m = re.search(r"^(.*?\.app)/Contents/MacOS/", comm.strip())
+        if m:
+            bundle = m.group(1)
+            break
+        p = int(ppid)
+        if p <= 1:
+            break
+    return tty, bundle
+
+
+def focus_session(sid):
+    """Bring the terminal tab of a session to the front. Returns (ok, message)."""
+    s = STORE.get(STORE.resolve(sid))
+    if not s or not s.get("pid"):
+        return False, "unknown process"
+    if sys.platform != "darwin":
+        return False, "macOS only"
+    tty, bundle = terminal_of(s["pid"])
+    if not bundle:
+        return False, "no app"
+    app = os.path.basename(bundle)[:-4]
+    script = None
+    if tty and "iterm" in app.lower():
+        script = ITERM_FOCUS % tty
+    elif tty and app == "Terminal":
+        script = TERMINAL_FOCUS % tty
+    if script:
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=8)
+        if r.stdout.strip() == "ok":
+            return True, app
+        dbg("focus:", r.stdout.strip(), r.stderr.strip()[:200])
+        if "not allowed" in r.stderr or "-1743" in r.stderr:
+            return False, "allow automation"
+    # other terminals / IDEs: at least bring the app forward
+    r = subprocess.run(["open", "-a", bundle], capture_output=True, timeout=8)
+    return r.returncode == 0, app
+
+
 # ---------------------------------------------------------------- device protocol
 
 def wire_session(s):
@@ -467,6 +567,7 @@ def wire_session(s):
             "st": s["state"], "det": ascii_fold(s.get("detail"), 96), "age": int(max(0, now - s["since"])),
             "act": int(max(0, now - s.get("act", s["updated"]))),
             "sub": int(s.get("sub") or 0), "ack": 1 if s.get("ack") else 0,
+            "fo": 1 if s.get("pid") and sys.platform == "darwin" else 0,
             "cwd": ascii_fold(s.get("cwd", "").replace(os.path.expanduser("~"), "~", 1), 96),
             "pr": ascii_fold(s.get("prompt"), 200), "rp": ascii_fold(strip_markdown(s.get("reply") or ""), 300)}
 
@@ -529,12 +630,18 @@ class DeviceLink:
             self.send_snapshot()
             self.send({"t": "cfg"})  # ask for the current settings (web device tools)
         elif t == "ack":
-            STORE.ack(str(msg.get("id", "")))
-            for s in STORE.snapshot():
-                if s["id"].startswith(str(msg.get("id", ""))) and not s.get("ack"):
-                    STORE.ack(s["id"])
+            STORE.ack(STORE.resolve(str(msg.get("id", ""))))
         elif t == "cfg":
             self.info["cfg"] = msg
+        elif t == "focus":
+            sid = str(msg.get("id", ""))
+
+            def run(link=self):
+                ok, m = focus_session(sid)
+                log(f"focus {sid[:24]}: {'ok' if ok else 'failed'} ({m})")
+                link.send({"t": "focused", "id": sid[:40], "ok": 1 if ok else 0, "m": ascii_fold(m, 24)})
+
+            threading.Thread(target=run, daemon=True).start()
         elif t == "log":
             log(f"[{self.name}] {msg.get('m')}")
 

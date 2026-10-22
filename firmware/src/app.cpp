@@ -215,7 +215,7 @@ float App::pulse(uint32_t periodMs) const {
 }
 
 bool App::animating() const {
-  if (touching_ || ledTestUntil_ || frameOn_ || (int32_t)(hal_.ms() - alertUntil_) < 0) return true;
+  if (touching_ || ledTestUntil_ || frameOn_ || focusState_ || (int32_t)(hal_.ms() - alertUntil_) < 0) return true;
   for (auto& s : sess_)
     if (s.used && (s.st == ST_WAITING || s.st == ST_WORKING)) return true;
   return false;
@@ -390,6 +390,7 @@ void App::handleLine(char* line) {
     copyUtf8(s->pr, sizeof s->pr, doc["pr"] | "");
     copyUtf8(s->rp, sizeof s->rp, doc["rp"] | "");
     s->sub = doc["sub"] | 0;
+    s->focusable = (doc["fo"] | 0) != 0;
     s->ack = (doc["ack"] | 1) != 0;
     // A session that starts waiting for you, or just finished, raises an alert:
     // frame, LED and its own card pulse together.
@@ -410,6 +411,13 @@ void App::handleLine(char* line) {
   } else if (!strcmp(t, "hi")) {
     copyUtf8(host_, sizeof host_, doc["host"] | "");
     dirty_ = true;
+  } else if (!strcmp(t, "focused")) {
+    if (!strcmp(doc["id"] | "", detailId_)) {
+      focusState_ = (doc["ok"] | 0) ? 2 : 3;
+      copyUtf8(focusMsg_, sizeof focusMsg_, doc["m"] | "");
+      focusAt_ = now;
+      dirty_ = true;
+    }
   } else if (!strcmp(t, "who")) {
     sendHello();
   } else if (!strcmp(t, "cfg")) {
@@ -512,6 +520,7 @@ void App::onTap(int x, int y) {
       Session& s = sess_[order_[idx]];
       copyUtf8(detailId_, sizeof detailId_, s.id);
       screen_ = SCR_DETAIL;
+      focusState_ = 0;
       if (s.st == ST_DONE) ackSession(&s);
     }
   } else if (screen_ == SCR_TEST) {
@@ -519,7 +528,19 @@ void App::onTap(int x, int y) {
   } else if (screen_ == SCR_LEDTEST) {
     ledTestUntil_ = hal_.ms();
   } else if (screen_ == SCR_DETAIL) {
-    if (y < S(40)) screen_ = SCR_LIST;
+    if (y < S(40)) {
+      Session* s = find(detailId_);
+      if (s && s->focusable && focusBtnX_ && x >= focusBtnX_ - S(8)) {
+        char b[80];
+        snprintf(b, sizeof b, "{\"t\":\"focus\",\"id\":\"%s\"}", s->id);
+        send(b);
+        focusState_ = 1;
+        focusAt_ = hal_.ms();
+      } else if (x < W_ / 2) {
+        screen_ = SCR_LIST;
+        focusState_ = 0;
+      }
+    }
   } else if (screen_ == SCR_SETTINGS) {
     if (y < S(40)) { screen_ = SCR_LIST; return; }
     int row = (y - S(42)) / S(28);
@@ -854,14 +875,30 @@ void App::drawDetail() {
   Session& s = *sp;
   drawBack(nullptr);
   int hh = S(36);
-  uint16_t col = stateColor(s.st);
-  const char* lab = stateLabel(s.st);
-  int lw = Painter::width(fSmall_, lab) + S(16);
-  int ph = fSmall_->height + S(6);
-  int px = W_ - S(12) - lw, py = (hh - ph) / 2;
-  float k = s.st == ST_WAITING ? beat() : 0;
-  p_.rrect(px, py, lw, ph, ph / 2, mix(cBg_, col, 70 + (uint8_t)(50 * k)));
-  p_.text(fSmall_, px + S(8), py + S(3), lab, cText_);
+  focusBtnX_ = 0;
+  if (s.focusable) {
+    // Focus: bring this session's terminal tab to the front on the computer
+    uint32_t age = hal_.ms() - focusAt_;
+    if ((focusState_ == 1 && age > 8000) || (focusState_ >= 2 && age > 2500)) focusState_ = 0;
+    const char* lab = focusState_ == 1 ? "\xE2\x80\xA6" : focusState_ == 2 ? "Opened" : focusState_ == 3 ? focusMsg_ : "Focus";
+    if (focusState_ == 3 && !focusMsg_[0]) lab = "Not found";
+    uint16_t bg = focusState_ == 2 ? cDone_ : focusState_ == 3 ? cWait_ : cAccent_;
+    int bw = Painter::width(fBold_, lab) + S(26), bh = S(26);
+    if (bw < S(76)) bw = S(76);
+    int bx = W_ - S(10) - bw, by = (hh - bh) / 2;
+    focusBtnX_ = bx;
+    p_.rrect(bx, by, bw, bh, bh / 2, bg);
+    p_.textCenter(fBold_, bx + bw / 2, by + (bh - fBold_->height) / 2, lab, rgb(255, 255, 255));
+  } else {
+    uint16_t col = stateColor(s.st);
+    const char* lab = stateLabel(s.st);
+    int lw = Painter::width(fSmall_, lab) + S(16);
+    int ph = fSmall_->height + S(6);
+    int px = W_ - S(12) - lw, py = (hh - ph) / 2;
+    float k = s.st == ST_WAITING ? beat() : 0;
+    p_.rrect(px, py, lw, ph, ph / 2, mix(cBg_, col, 70 + (uint8_t)(50 * k)));
+    p_.text(fSmall_, px + S(8), py + S(3), lab, cText_);
+  }
 
   int x = S(12), w = W_ - S(24);
   int y = hh + S(10);
