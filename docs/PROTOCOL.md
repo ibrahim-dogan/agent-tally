@@ -29,7 +29,7 @@ Newline-delimited JSON, UTF-8, one object per line, at most 2047 bytes. Lines th
 | `d` | `id` | Remove a session |
 | `ping` | `now`, `tz` | Keep-alive, every 5 s |
 | `who` | `v` | Ask the display to send `hello` |
-| `cfg` | any of `brightness` (10..255), `autodim`, `invert`, `flip`, `swaprb`, `led`, `sound`, `gamma` (0..4), `panel` (0 auto, 1 ILI9341, 2 ST7789; restarts), `test` (1 shows colour bars), `beep` | Change settings (persisted in NVS). The display answers with its full `cfg` |
+| `cfg` | any of `brightness` (10..255), `autodim`, `invert`, `flip`, `swaprb`, `led`, `sound`, `gamma` (0..4), `panel` (0 auto, 1 ILI9341, 2 ST7789; restarts), `test` (1 shows colour bars), `beep`, `flash` (alert frame), `sleep` + `sleep_from` / `sleep_to` (night hours, local time: screen and LED off, a touch shows the screen for 30 s), `led_rgb` + `led_pat` + `led_ms` + `led_label` (LED test) | Change settings (persisted in NVS). The display answers with its full `cfg` |
 
 Text fields are already trimmed by the bridge (name 40 chars, detail 96, cwd 96, prompt 200, reply 300) and limited to characters the fonts contain.
 

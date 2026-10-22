@@ -51,9 +51,10 @@ class EspHal : public Hal {
   void load(Settings& s) override {
     Preferences p;
     p.begin("agenttally", true);
-    Settings tmp;
-    if (p.getBytesLength("cfg") == sizeof(Settings)) {
-      p.getBytes("cfg", &tmp, sizeof tmp);
+    Settings tmp;  // defaults for fields newer than what was saved
+    size_t len = p.getBytesLength("cfg");
+    if (len >= 2 && len <= sizeof(Settings)) {
+      p.getBytes("cfg", &tmp, len);
       if (tmp.magic == s.magic && tmp.version == s.version) s = tmp;
     }
     p.end();

@@ -138,8 +138,12 @@ void App::tick() {
   int w, d, wk, id;
   counts(w, d, wk, id);
   onStateChange(w, d);
+  bool wasSleeping = sleeping_;
+  sleeping_ = nightNow() && (int32_t)(now - peekUntil_) >= 0;
+  if (wasSleeping && !sleeping_) dirty_ = true;
   updateLed();
   updateBacklight();
+  if (sleeping_) return;  // nothing to see: skip drawing
 
   uint32_t interval = animating() ? 50 : 1000;
   if (dirty_ || now - lastFrame_ >= interval) {
@@ -237,6 +241,7 @@ float App::ledPattern(int pat) const {
 }
 
 void App::updateLed() {
+  if (sleeping_ && !ledTestUntil_) { hal_.led(0, 0, 0); return; }
   if (ledTestUntil_) {
     if ((int32_t)(hal_.ms() - ledTestUntil_) < 0) {
       float k = ledPattern(ledTestPat_);
@@ -266,7 +271,20 @@ void App::updateLed() {
   }
 }
 
+// Night hours by the host's local clock; unknown time means never asleep.
+bool App::nightNow() const {
+  if (!cfg_.sleep || !epochAtSync_ || cfg_.sleepFrom == cfg_.sleepTo) return false;
+  int64_t t = epochAtSync_ + (int64_t)(hal_.ms() - syncMs_) / 1000;
+  int h = (int)((((t % 86400) + 86400) % 86400) / 3600);
+  if (cfg_.sleepFrom < cfg_.sleepTo) return h >= cfg_.sleepFrom && h < cfg_.sleepTo;
+  return h >= cfg_.sleepFrom || h < cfg_.sleepTo;  // window across midnight
+}
+
 void App::updateBacklight() {
+  if (sleeping_) {
+    if (curBl_) { curBl_ = 0; hal_.backlight(0); }
+    return;
+  }
   uint8_t target = cfg_.brightness;
   dimmed_ = cfg_.autodim && !lastWaiting_ && hal_.ms() - lastActivity_ > 180000;
   if (dimmed_) target = cfg_.brightness / 8 > 6 ? cfg_.brightness / 8 : 6;
@@ -295,12 +313,12 @@ void App::sendHello() {
 }
 
 void App::sendCfg() {
-  char b[220];
+  char b[300];
   snprintf(b, sizeof b,
            "{\"t\":\"cfg\",\"brightness\":%d,\"autodim\":%d,\"invert\":%d,\"flip\":%d,\"swaprb\":%d,"
-           "\"led\":%d,\"sound\":%d,\"gamma\":%d,\"flash\":%d}",
+           "\"led\":%d,\"sound\":%d,\"gamma\":%d,\"flash\":%d,\"sleep\":%d,\"sleep_from\":%d,\"sleep_to\":%d}",
            cfg_.brightness, cfg_.autodim, cfg_.invert, cfg_.flip, cfg_.swaprb, cfg_.led, cfg_.sound, cfg_.gamma,
-           cfg_.flash);
+           cfg_.flash, cfg_.sleep, cfg_.sleepFrom, cfg_.sleepTo);
   send(b);
 }
 
@@ -429,6 +447,9 @@ void App::handleLine(char* line) {
     if (doc["swaprb"].is<int>()) { cfg_.swaprb = doc["swaprb"].as<int>(); pal = any = true; }
     if (doc["led"].is<int>()) { cfg_.led = doc["led"].as<int>(); any = true; }
     if (doc["sound"].is<int>()) { cfg_.sound = doc["sound"].as<int>(); any = true; }
+    if (doc["sleep"].is<int>()) { cfg_.sleep = doc["sleep"].as<int>(); any = true; }
+    if (doc["sleep_from"].is<int>()) { cfg_.sleepFrom = doc["sleep_from"].as<int>() % 24; any = true; }
+    if (doc["sleep_to"].is<int>()) { cfg_.sleepTo = doc["sleep_to"].as<int>() % 24; any = true; }
     if (doc["flash"].is<int>()) { cfg_.flash = doc["flash"].as<int>(); any = true; if (cfg_.flash) startAlert(cAccent_, 255, 90, 40); }
     if (doc["gamma"].is<int>()) { cfg_.gamma = doc["gamma"].as<int>() & 7; disp = any = true; }
     if (doc["beep"].is<int>()) hal_.tone(1760, 120);
@@ -472,7 +493,8 @@ void App::pollTouch() {
     touchX0_ = x; touchY0_ = touchY_ = y;
     scroll0_ = scroll_;
     touchT0_ = now;
-    wakeTouch_ = dimmed_;  // first touch on a dimmed screen only wakes it
+    wakeTouch_ = dimmed_ || sleeping_;  // first touch on a dimmed or sleeping screen only wakes it
+    if (sleeping_) { peekUntil_ = now + 30000; frameOn_ = false; }
     lastActivity_ = now;
   } else if (down && touching_) {
     touchY_ = y;
@@ -543,7 +565,7 @@ void App::onTap(int x, int y) {
     }
   } else if (screen_ == SCR_SETTINGS) {
     if (y < S(40)) { screen_ = SCR_LIST; return; }
-    int row = (y - S(42)) / S(28);
+    int row = (y - S(42)) / S(26);
     bool disp = false, pal = false;
     switch (row) {
       case 0:
@@ -557,8 +579,9 @@ void App::onTap(int x, int y) {
       case 4: cfg_.flip = !cfg_.flip; disp = true; break;
       case 5: cfg_.led = !cfg_.led; break;
       case 6: cfg_.sound = !cfg_.sound; if (cfg_.sound) hal_.tone(1760, 80); break;
-      case 7: screen_ = SCR_TEST; return;
-      case 8: hal_.calibrateTouch(cfg_); break;
+      case 7: cfg_.sleep = !cfg_.sleep; break;
+      case 8: screen_ = SCR_TEST; return;
+      case 9: hal_.calibrateTouch(cfg_); break;
       default: return;
     }
     if (disp) hal_.applyDisplay(cfg_);
@@ -941,14 +964,17 @@ void App::drawToggle(int x, int y, bool on) {
 }
 
 void App::drawSettings() {
+  char sleepLabel[32];
+  snprintf(sleepLabel, sizeof sleepLabel, "Sleep %02d\xE2\x80\x93%02d", cfg_.sleepFrom, cfg_.sleepTo);
   drawBack("Settings");
   struct Row { const char* label; int kind; bool on; };  // kind 0 toggle, 1 brightness, 2 button
   Row rows[] = {
       {"Brightness", 1, false},        {"Dim when quiet", 0, cfg_.autodim}, {"Invert colors", 0, cfg_.invert},
       {"Flash on alerts", 0, cfg_.flash}, {"Rotate 180\xC2\xB0", 0, cfg_.flip}, {"Status LED", 0, cfg_.led},
-      {"Sound", 0, cfg_.sound},        {"Display test", 2, false},       {"Calibrate touch", 2, false},
+      {"Sound", 0, cfg_.sound},        {sleepLabel, 0, cfg_.sleep},
+      {"Display test", 2, false},       {"Calibrate touch", 2, false},
   };
-  int rh = S(28);
+  int rh = S(26);
   int y = S(42);
   for (auto& r : rows) {
     if (p_.vis(y, rh)) {
@@ -977,9 +1003,6 @@ void App::drawSettings() {
     }
     y += rh;
   }
-  char info[96];
-  snprintf(info, sizeof info, "v%s \xC2\xB7 %s \xC2\xB7 %s", AT_FW_VERSION, hal_.board(), hal_.panel());
-  p_.textCenter(fSmall_, W_ / 2, H_ - fSmall_->height - S(6), info, cDim_);
 }
 
 // Raw colour bars (not run through the palette) to diagnose panel settings:

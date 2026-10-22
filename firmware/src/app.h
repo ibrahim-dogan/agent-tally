@@ -25,6 +25,10 @@ struct Settings {
   uint8_t gamma = 0;         // 0 = panel default, 1..4 = gamma curve 1/2/3/4 (GAMSET 0x26)
   bool touchCal = false;     // calibration below is valid
   uint16_t cal[8] = {0};
+  // appended later: older saved settings are shorter and keep these defaults
+  bool sleep = true;         // screen and LED off during the night hours below
+  uint8_t sleepFrom = 22;    // local hour the night starts
+  uint8_t sleepTo = 9;       // local hour it ends
 };
 
 // Everything platform specific lives behind this interface (ESP32 or SDL sim).
@@ -121,6 +125,8 @@ class App {
   bool dirty_ = true;
   uint32_t lastFrame_ = 0, lastActivity_ = 0;
   bool dimmed_ = false;
+  bool sleeping_ = false;       // night hours: backlight and LED off
+  uint32_t peekUntil_ = 0;      // a touch at night shows the screen for a while
   uint8_t curBl_ = 0;
   int lastWaiting_ = 0, lastDone_ = 0;
   uint32_t flashUntil_ = 0;
@@ -161,6 +167,7 @@ class App {
   void onStateChange(int waiting, int done);
   void updateLed();
   void updateBacklight();
+  bool nightNow() const;
   void pollTouch();
   void onTap(int x, int y);
   void onLongPress(int x, int y);

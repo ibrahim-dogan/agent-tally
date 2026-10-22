@@ -104,7 +104,8 @@ class SimHal : public Hal {
     FILE* f = fopen(path().c_str(), "rb");
     if (!f) return;
     Settings t;
-    if (fread(&t, sizeof t, 1, f) == 1 && t.magic == s.magic && t.version == s.version) s = t;
+    size_t n = fread(&t, 1, sizeof t, f);
+    if (n >= 2 && t.magic == s.magic && t.version == s.version) s = t;
     fclose(f);
   }
   void save(const Settings& s) override {

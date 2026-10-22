@@ -227,6 +227,8 @@ curl -fsSL https://raw.githubusercontent.com/ibrahim-dogan/agent-tally/main/host
           <div class="switch">Status LED <input type="checkbox" data-cfg="led"></div>
           <div class="switch">Sound <input type="checkbox" data-cfg="sound"></div>
           <div class="switch">Flash on alerts <input type="checkbox" data-cfg="flash"></div>
+          <div class="switch">Sleep at night <input type="checkbox" data-cfg="sleep"></div>
+          <div class="switch" style="gap:8px">from <select id="sleep_from" style="width:auto"><option value="0">00:00</option><option value="1">01:00</option><option value="2">02:00</option><option value="3">03:00</option><option value="4">04:00</option><option value="5">05:00</option><option value="6">06:00</option><option value="7">07:00</option><option value="8">08:00</option><option value="9">09:00</option><option value="10">10:00</option><option value="11">11:00</option><option value="12">12:00</option><option value="13">13:00</option><option value="14">14:00</option><option value="15">15:00</option><option value="16">16:00</option><option value="17">17:00</option><option value="18">18:00</option><option value="19">19:00</option><option value="20">20:00</option><option value="21">21:00</option><option value="22">22:00</option><option value="23">23:00</option></select> to <select id="sleep_to" style="width:auto"><option value="0">00:00</option><option value="1">01:00</option><option value="2">02:00</option><option value="3">03:00</option><option value="4">04:00</option><option value="5">05:00</option><option value="6">06:00</option><option value="7">07:00</option><option value="8">08:00</option><option value="9">09:00</option><option value="10">10:00</option><option value="11">11:00</option><option value="12">12:00</option><option value="13">13:00</option><option value="14">14:00</option><option value="15">15:00</option><option value="16">16:00</option><option value="17">17:00</option><option value="18">18:00</option><option value="19">19:00</option><option value="20">20:00</option><option value="21">21:00</option><option value="22">22:00</option><option value="23">23:00</option></select></div>
         </div>
         <div class="ctl" data-needs-device>
           <label for="panel">Panel driver (2.8" only, restarts)</label>
@@ -324,6 +326,7 @@ function showDevice(d) {
     $("brightness").value = c.brightness;
     $("gamma").value = c.gamma ?? 0;
     document.querySelectorAll("[data-cfg]").forEach(el => { if (el.dataset.cfg in c) el.checked = !!c[el.dataset.cfg]; });
+    if ("sleep_from" in c) { $("sleep_from").value = c.sleep_from; $("sleep_to").value = c.sleep_to; }
   }
 }
 
@@ -451,6 +454,8 @@ window.addEventListener("pagehide", () => { if (port) port.close().catch(() => {
 let brightTimer;
 $("brightness").addEventListener("input", e => { clearTimeout(brightTimer); brightTimer = setTimeout(() => cfg({ brightness: +e.target.value }), 120); });
 $("gamma").addEventListener("change", e => cfg({ gamma: +e.target.value }));
+$("sleep_from").addEventListener("change", e => cfg({ sleep_from: +e.target.value }));
+$("sleep_to").addEventListener("change", e => cfg({ sleep_to: +e.target.value }));
 $("panel").addEventListener("change", e => {
   cfg({ panel: +e.target.value }); log("restarting with the new panel driver…");
   if (!bridge) { linked = false; whoTimer = setInterval(() => sendSerial({ t: "who", v: 1 }), 1500); }
