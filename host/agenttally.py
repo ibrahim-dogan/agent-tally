@@ -573,6 +573,39 @@ def focus_tty(tty, bundle):
     return None
 
 
+ITERM_LIST = """
+tell application id "com.googlecode.iterm2"
+  set out to ""
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        set out to out & (tty of s) & "|||" & (name of s) & linefeed
+      end repeat
+    end repeat
+  end repeat
+  return out
+end tell
+"""
+
+
+def _clean_tab_title(name):
+    """'✳ Fix login (2) (node)' -> 'Fix login (2)': drop Claude's status glyph and iTerm's job name."""
+    name = re.sub(r"^[^\w(\[]+\s*", "", name.strip())
+    return re.sub(r"\s*\([^()]*\)$", "", name).strip()
+
+
+def iterm_tab_by_title(title):
+    """tty of the iTerm2 tab whose title is exactly this session's title (Claude sets it)."""
+    if not title:
+        return None
+    r = subprocess.run(["osascript", "-e", ITERM_LIST], capture_output=True, text=True, timeout=8)
+    for line in r.stdout.splitlines():
+        tty, _, name = line.partition("|||")  # (AppleScript's `tab` means an iTerm tab in here)
+        if name.strip() == title or _clean_tab_title(name) == title:
+            return tty.strip()
+    return None
+
+
 ITERM_NEW_TAB = """
 tell application id "com.googlecode.iterm2"
   activate
@@ -624,6 +657,13 @@ def focus_session(sid):
             if cbundle:
                 r = subprocess.run(["open", "-a", cbundle], capture_output=True, timeout=8)
                 return r.returncode == 0, os.path.basename(cbundle)[:-4]
+        # a tab that switched to this session from inside Claude (agent view, /resume):
+        # Claude names the tab after the session it shows
+        tab = iterm_tab_by_title(s.get("name"))
+        if tab:
+            res = focus_tty(tab, "/Applications/iTerm.app")
+            if res:
+                return res
         return open_attach_tab(raw_id)
     if not bundle:
         return False, "no app"

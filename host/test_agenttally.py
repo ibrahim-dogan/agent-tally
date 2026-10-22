@@ -202,6 +202,11 @@ class BridgeTest(unittest.TestCase):
         self.hook(hook_event_name="PreToolUse", tool_name="Read", tool_input={}, transcript_path=t.name)
         self.assertEqual(self.session()["name"], "Login v2")
 
+    def test_tab_title_cleanup(self):
+        self.assertEqual(at._clean_tab_title("✳ Checkout tests (2) (node)"), "Checkout tests (2)")
+        self.assertEqual(at._clean_tab_title("◐ CYD ajan durum ekranı projesi (claude)"), "CYD ajan durum ekranı projesi")
+        self.assertEqual(at._clean_tab_title("⠂ Fix bug"), "Fix bug")
+
     def test_interrupt_detection(self):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as t:
             t.write(json.dumps({"type": "assistant", "message": {"content": []}}) + "\n")
