@@ -207,6 +207,35 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(at._clean_tab_title("◐ CYD ajan durum ekranı projesi (claude)"), "CYD ajan durum ekranı projesi")
         self.assertEqual(at._clean_tab_title("⠂ Fix bug"), "Fix bug")
 
+    def test_demo_mode_hides_real_sessions(self):
+        at.STORE.upsert("claude:real", state="working", name="secret project")
+        c = socket.create_connection(("127.0.0.1", self.sim_port))
+        c.settimeout(3)
+        c.sendall(b'{"t":"hello","v":1,"fw":"t","board":"sim","w":240,"h":320}\n')
+        f = c.makefile("r")
+        at.DEMO_MODE.set(True, "studio")
+        try:
+            seen, deadline = [], time.time() + 2.5
+            while time.time() < deadline:
+                try:
+                    m = json.loads(f.readline())
+                except (socket.timeout, ValueError):
+                    break
+                seen.append(m)
+                if m.get("t") == "s" and m["id"] == "demo:a":
+                    break
+            names = [m.get("name") for m in seen if m.get("t") == "s"]
+            hosts = [m.get("host") for m in seen if m.get("t") == "hi"]
+            self.assertIn("Refactor checkout flow", names)
+            self.assertIn("studio", hosts)
+            after_on = seen[[i for i, m in enumerate(seen) if m.get("host") == "studio"][0]:]
+            self.assertNotIn("secret project", [m.get("name") for m in after_on if m.get("t") == "s"])
+            self.assertEqual(at.focus_session("demo:a"), (True, "demo"))
+        finally:
+            at.DEMO_MODE.set(False)
+            c.close()
+        self.assertFalse([s for s in at.STORE.snapshot() if s.get("demo")])
+
     def test_interrupt_detection(self):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as t:
             t.write(json.dumps({"type": "assistant", "message": {"content": []}}) + "\n")

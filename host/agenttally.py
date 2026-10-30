@@ -640,6 +640,8 @@ def open_attach_tab(session_id):
 def focus_session(sid):
     """Bring the terminal tab of a session to the front. Returns (ok, message)."""
     s = STORE.get(STORE.resolve(sid))
+    if s and s.get("demo"):
+        return True, "demo"
     if not s or not s.get("pid"):
         return False, "unknown process"
     if sys.platform != "darwin":
@@ -693,6 +695,8 @@ def tz_offset():
 
 
 def host_label():
+    if DEMO_MODE.on:
+        return ascii_fold(DEMO_MODE.host, 24)
     name = os.environ.get("AGENTTALLY_NAME") or socket.gethostname().split(".")[0]
     return ascii_fold(name, 24)
 
@@ -720,7 +724,8 @@ class DeviceLink:
     def send_snapshot(self):
         self.send({"t": "clr", "now": int(time.time()), "tz": tz_offset()})
         for s in sorted(STORE.snapshot(), key=lambda s: s["updated"]):
-            self.send(wire_session(s))
+            if visible(s):
+                self.send(wire_session(s))
 
     def on_line(self, line):
         self.last_rx = time.time()
@@ -781,6 +786,8 @@ class Hub:
                 self.links.remove(link)
 
     def on_change(self, kind, payload):
+        if kind == "upsert" and not visible(payload):
+            return
         msg = wire_session(payload) if kind == "upsert" else {"t": "d", "id": payload[:40]}
         with self.lock:
             for l in self.links:
@@ -1054,6 +1061,103 @@ def sim_server(port, stop):
 
         threading.Thread(target=lambda c=conn, l=link, r=read: (pump(l, r, c.sendall), c.close()),
                          daemon=True).start()
+
+
+# ---------------------------------------------------------------- demo mode
+# For screen recordings: real sessions are hidden from the displays (still tracked)
+# and a scripted set of fake sessions plays out in a loop instead.
+
+# (seconds into the loop, session key, fields); "new" creates the session
+DEMO_SCRIPT = [
+    (0, "a", dict(new=True, name="Refactor checkout flow", cwd="~/code/web-shop", state="working",
+                  detail="Read src/cart.ts", prompt="make the checkout a single page")),
+    (0, "b", dict(new=True, name="Add rate limiting to the API", cwd="~/code/api-gateway", state="working",
+                  detail="Grep rateLimit", prompt="add per-key rate limiting, 100 req/min")),
+    (0, "c", dict(new=True, src="codex", name="Migrate users table", cwd="~/work/infra", state="working",
+                  detail="$ alembic upgrade head --sql", prompt="split the users table")),
+    (0, "d", dict(new=True, name="Write release notes", cwd="~/code/web-shop", state="idle",
+                  detail="Waiting for your next prompt", age=1500)),
+    (3, "a", dict(detail="Edit src/checkout/Page.tsx")),
+    (6, "b", dict(detail="Read middleware/auth.ts")),
+    (8, "a", dict(detail="$ npm test -- checkout")),
+    (10, "b", dict(state="waiting", detail="Allow $ npm install express-rate-limit?")),
+    (13, "c", dict(detail="Edit migrations/0042_users.py")),
+    (15, "a", dict(detail="Agent: Explore payment providers", sub=2)),
+    (19, "e", dict(new=True, name="Fix flaky CI test", cwd="~/code/mobile-app", state="working",
+                   detail="Read .github/workflows/ci.yml", prompt="why does the retry test fail on CI?")),
+    (22, "b", dict(state="working", detail="$ npm install express-rate-limit")),
+    (24, "a", dict(sub=0, detail="$ npm test")),
+    (27, "a", dict(state="done", detail="Checkout is a single page now.",
+                   reply="Checkout is a single page now. All 132 tests pass and the bundle is 18 KB smaller.")),
+    (30, "e", dict(state="waiting", detail="Question: Mock the clock or use fake timers?")),
+    (33, "c", dict(detail="$ pytest tests/migrations")),
+    (36, "b", dict(detail="Edit middleware/rateLimit.ts")),
+    (40, "e", dict(state="working", detail="Edit tests/retry.test.ts")),
+    (45, "b", dict(state="done", detail="Rate limiting is on.",
+                   reply="Rate limiting is on: 100 requests per minute per key, 429 with Retry-After.")),
+    (50, "c", dict(state="done", detail="Migration 0042 applied on staging.",
+                   reply="Migration 0042 applied on staging; the rollback is tested too.")),
+    (55, "e", dict(state="done", detail="Each test gets its own clock now.",
+                   reply="The retry test shared a clock with others. Each test gets its own now; 20 CI runs green.")),
+]
+DEMO_LOOP = 70
+
+
+class DemoMode:
+    def __init__(self):
+        self.on = False
+        self.host = "studio"
+        self.stop = threading.Event()
+        self.thread = None
+
+    def set(self, on, host=None):
+        if host:
+            self.host = str(host)
+        if on == self.on:
+            return
+        self.on = on
+        if on:
+            self.stop = threading.Event()
+            self.thread = threading.Thread(target=self.run, args=(self.stop,), daemon=True)
+            self.thread.start()
+        else:
+            self.stop.set()
+            for s in STORE.snapshot():
+                if s.get("demo"):
+                    STORE.remove(s["id"])
+        log(f"demo mode {'on' if on else 'off'}")
+        for l in list(HUB.links):  # real sessions disappear / come back
+            l.send({"t": "hi", "v": PROTO, "host": host_label(), "now": int(time.time()), "tz": tz_offset()})
+            l.send_snapshot()
+
+    def run(self, stop):
+        while not stop.is_set():
+            start = time.time()
+            for s in STORE.snapshot():
+                if s.get("demo") and s["id"] != "demo:d":
+                    STORE.remove(s["id"])
+            for at, key, fields in DEMO_SCRIPT:
+                if stop.wait(max(0, start + at - time.time())):
+                    return
+                f = dict(fields)
+                sid = "demo:" + key
+                age = f.pop("age", None)
+                if f.pop("new", False) or STORE.get(sid) is None:
+                    f.setdefault("src", "claude")
+                    f.setdefault("sub", 0)
+                    f.setdefault("reply", "")
+                STORE.upsert(sid, demo=True, **f)
+                if age:
+                    STORE.upsert(sid, since=time.time() - age, act=time.time() - age, quiet=True)
+            stop.wait(max(0, start + DEMO_LOOP - time.time()))
+
+
+DEMO_MODE = DemoMode()
+
+
+def visible(s):
+    """In demo mode only the scripted sessions reach the displays, otherwise only real ones."""
+    return bool(s.get("demo")) == DEMO_MODE.on
 
 
 # ---------------------------------------------------------------- mouse pointer (macOS)
@@ -1331,6 +1435,8 @@ class Api(BaseHTTPRequestHandler):
                 serial_resume()
             elif self.path.startswith("/api/device"):
                 HUB.broadcast(dict(data, t="cfg"))
+            elif self.path.startswith("/api/demo-mode"):
+                DEMO_MODE.set(bool(data.get("on")), data.get("host"))
             elif self.path.startswith("/api/clear"):
                 for s in STORE.snapshot():
                     STORE.remove(s["id"])
@@ -1348,6 +1454,9 @@ def cmd_serve(a):
     VERBOSE = a.verbose
     os.makedirs(HOME, exist_ok=True)
     STORE.load()
+    for s in STORE.snapshot():  # leftovers of a demo that was running when the bridge stopped
+        if s.get("demo"):
+            STORE.remove(s["id"])
     stop = threading.Event()
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", a.http_port), Api)
@@ -1643,6 +1752,11 @@ def cmd_pointer(a):
           f"(bottom edge of the main screen from {p['start']:.0%}, {p['length']:.0%} wide, speed {p['speed']})")
 
 
+def cmd_demo_mode(a):
+    api("/api/demo-mode", {"on": a.action == "on", "host": a.host}, port=a.http_port)
+    print("demo mode " + a.action + (": real sessions are hidden from the display" if a.action == "on" else ""))
+
+
 def cmd_uninstall(a):
     write_settings(strip_our_hooks(load_settings()))
     print("Claude Code hooks removed")
@@ -1697,6 +1811,11 @@ def main():
     s.set_defaults(fn=cmd_install)
 
     sub.add_parser("uninstall", help="remove hooks + autostart").set_defaults(fn=cmd_uninstall)
+
+    s = sub.add_parser("demo-mode", help="hide real sessions and play a scripted demo (for recordings)")
+    s.add_argument("action", choices=["on", "off"])
+    s.add_argument("--host", default="studio", help="name shown in the footer while recording")
+    s.set_defaults(fn=cmd_demo_mode)
 
     s = sub.add_parser("pointer", help="move the Mac mouse onto the display through the screen edge")
     s.add_argument("action", choices=["on", "off", "status"])
