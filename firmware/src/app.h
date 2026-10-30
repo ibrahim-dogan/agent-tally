@@ -125,7 +125,10 @@ class App {
   bool dirty_ = true;
   uint32_t lastFrame_ = 0, lastActivity_ = 0;
   bool dimmed_ = false;
-  bool sleeping_ = false;       // night hours: backlight and LED off
+  bool sleeping_ = false;
+  // Mac mouse moved onto the display (host/pointer.swift via the bridge)
+  bool ptrOn_ = false, ptrB_ = false;
+  int ptrX_ = 0, ptrY_ = 0;       // night hours: backlight and LED off
   uint32_t peekUntil_ = 0;      // a touch at night shows the screen for a while
   uint8_t curBl_ = 0;
   int lastWaiting_ = 0, lastDone_ = 0;
@@ -186,6 +189,7 @@ class App {
   void drawTest();
   void drawLedTest();
   void drawFrame();
+  void drawPointer();
   void startAlert(uint16_t color, uint8_t r, uint8_t g, uint8_t b);
   float beat() const;
   float ledPattern(int pat) const;

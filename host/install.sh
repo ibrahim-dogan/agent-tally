@@ -6,7 +6,9 @@ set -e
 REPO=${AGENTTALLY_REPO:-ibrahim-dogan/agent-tally}
 REF=${AGENTTALLY_REF:-main}
 command -v python3 >/dev/null 2>&1 || { echo "AgentTally needs python3 (3.8 or newer)." >&2; exit 1; }
-TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT
-curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/host/agenttally.py" -o "$TMP"
-python3 "$TMP" install "$@"
+DIR=$(mktemp -d)
+trap 'rm -rf "$DIR"' EXIT
+curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/host/agenttally.py" -o "$DIR/agenttally.py"
+# optional: mouse-on-the-display helper (macOS, compiled locally on first use)
+curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/host/pointer.swift" -o "$DIR/pointer.swift" || true
+python3 "$DIR/agenttally.py" install "$@"

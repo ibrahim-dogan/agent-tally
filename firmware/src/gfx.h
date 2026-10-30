@@ -33,6 +33,11 @@ struct Painter {
   void rrect(int x, int y, int w, int h, int r, uint16_t c) {
     if (vis(y, h)) spr->fillSmoothRoundRect(x, y - oy, w, h, r, c);
   }
+  void tri(int x0, int y0, int x1, int y1, int x2, int y2, uint16_t c) {
+    int top = y0 < y1 ? (y0 < y2 ? y0 : y2) : (y1 < y2 ? y1 : y2);
+    int bot = y0 > y1 ? (y0 > y2 ? y0 : y2) : (y1 > y2 ? y1 : y2);
+    if (vis(top, bot - top + 1)) spr->fillTriangle(x0, y0 - oy, x1, y1 - oy, x2, y2 - oy, c);
+  }
   void circle(int cx, int cy, int r, uint16_t c) {
     if (vis(cy - r, 2 * r + 1)) spr->fillSmoothCircle(cx, cy - oy, r, c);
   }

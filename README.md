@@ -79,6 +79,12 @@ curl -X POST localhost:47321/api/event -d '{"source":"aider","id":"1","state":"w
 notify = ["python3", "/Users/you/.agent-tally/agenttally.py", "codex-notify"]
 ```
 
+## Use the Mac mouse on the display (macOS)
+
+Push the mouse against the bottom edge of the main screen (its left quarter by default) and it moves onto the display, like a second screen: click to tap, hold and drag to scroll, the wheel scrolls the list, a right click goes back. Move up past the display's top edge, press Esc or Cmd-Tab to return.
+
+It needs no Accessibility or Input Monitoring permission: a small helper (`host/pointer.swift`, compiled on first use with the Xcode command line tools) freezes and hides the cursor the way games do and reads the movement from events sent to its own window. Tune or switch it off with `agenttally pointer on|off|status --start 0.0 --length 0.25 --speed 0.8`.
+
 ## Device settings
 
 Long-press the header, or tap the ⋮ icon in the top-right corner, to open the settings screen:

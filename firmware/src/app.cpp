@@ -429,6 +429,30 @@ void App::handleLine(char* line) {
   } else if (!strcmp(t, "hi")) {
     copyUtf8(host_, sizeof host_, doc["host"] | "");
     dirty_ = true;
+  } else if (!strcmp(t, "m")) {  // mouse pointer from the Mac
+    bool on = (doc["on"] | 1) != 0;
+    if (!on) {
+      ptrOn_ = ptrB_ = false;
+    } else {
+      ptrOn_ = true;
+      ptrX_ = doc["x"] | 0;
+      ptrY_ = doc["y"] | 0;
+      ptrB_ = (doc["b"] | 0) != 0;
+      lastActivity_ = now;
+      if (sleeping_ || nightNow()) peekUntil_ = now + 30000;
+    }
+    dirty_ = true;
+  } else if (!strcmp(t, "ms")) {  // scroll wheel: content follows the fingers ("natural")
+    if (screen_ == SCR_LIST) {
+      int ns = scroll_ - (int)(doc["dy"] | 0);
+      scroll_ = ns < 0 ? 0 : ns > scrollMax_ ? scrollMax_ : ns;
+    }
+    lastActivity_ = now;
+    dirty_ = true;
+  } else if (!strcmp(t, "mb")) {  // right click: back
+    if (screen_ != SCR_LIST) { screen_ = SCR_LIST; focusState_ = 0; }
+    if (ledTestUntil_) ledTestUntil_ = now;
+    dirty_ = true;
   } else if (!strcmp(t, "focused")) {
     if (!strcmp(doc["id"] | "", detailId_)) {
       focusState_ = (doc["ok"] | 0) ? 2 : 3;
@@ -486,6 +510,11 @@ void App::ackSession(Session* s) {
 void App::pollTouch() {
   int32_t x, y;
   bool down = tft_.getTouch(&x, &y) > 0;
+  if (!down && ptrOn_ && linked_) {  // the Mac mouse acts as a finger: click = touch
+    down = ptrB_;
+    x = ptrX_;
+    y = ptrY_;
+  }
   uint32_t now = hal_.ms();
   if (down && !touching_) {
     touching_ = true;
@@ -640,6 +669,7 @@ void App::render() {
     band.fillSprite(cBg_);
     drawScreen();
     drawFrame();
+    drawPointer();
     pushBand(band, by);
   }
   tft_.waitDMA();
@@ -1040,4 +1070,17 @@ void App::drawLedTest() {
   char b[48];
   snprintf(b, sizeof b, "%s \xC2\xB7 %d %d %d", pats[ledTestPat_ < 6 ? ledTestPat_ : 0], ledTest_[0], ledTest_[1], ledTest_[2]);
   p_.textCenter(fSmall_, W_ / 2, cy + S(58) + fHuge_->height + S(6), b, cMuted_);
+}
+
+// Arrow cursor for the Mac mouse; orange while the button is held.
+void App::drawPointer() {
+  if (!ptrOn_ || !linked_) return;
+  int x = ptrX_, y = ptrY_;
+  int a = S(15), b = S(11), c = S(4);
+  uint16_t outline = rgb(10, 10, 12);
+  uint16_t fill = ptrB_ ? cAccent_ : rgb(255, 255, 255);
+  p_.tri(x - 1, y - 2, x - 1, y + a + 2, x + b + 2, y + b + 1, outline);
+  p_.tri(x, y, x, y + a, x + b, y + b, fill);
+  p_.tri(x + c, y + b - 1, x + c + S(3), y + a + S(3), x + c + S(6), y + b, outline);
+  p_.tri(x + c + 1, y + b, x + c + S(3), y + a + S(2), x + c + S(5), y + b, fill);
 }

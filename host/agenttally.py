@@ -1056,6 +1056,132 @@ def sim_server(port, stop):
                          daemon=True).start()
 
 
+# ---------------------------------------------------------------- mouse pointer (macOS)
+# host/pointer.swift: push the mouse off the bottom edge of the main screen and it
+# moves onto the display. Compiled on first use, needs swiftc (Xcode command line tools).
+
+CONFIG_FILE = os.path.join(HOME, "config.json")
+POINTER_DEFAULTS = {"enabled": True, "start": 0.0, "length": 0.25, "speed": 0.8}
+
+
+def load_config():
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(cfg):
+    os.makedirs(HOME, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
+def pointer_settings():
+    return dict(POINTER_DEFAULTS, **(load_config().get("pointer") or {}))
+
+
+def pointer_binary():
+    """Path of the compiled helper, building it when the source is newer. None if unavailable."""
+    if sys.platform != "darwin":
+        return None
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pointer.swift")
+    out = os.path.join(HOME, "agenttally-pointer")
+    if not os.path.exists(src):
+        return out if os.path.exists(out) else None
+    if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(src):
+        return out
+    if not shutil.which("xcrun"):
+        log("pointer: swiftc not found (install the Xcode command line tools to use the mouse on the display)")
+        return None
+    log("pointer: compiling helper...")
+    r = subprocess.run(["xcrun", "swiftc", "-O", src, "-o", out], capture_output=True, text=True)
+    if r.returncode != 0:
+        log("pointer: compile failed: " + r.stderr.strip()[:300])
+        return None
+    return out
+
+
+class PointerManager:
+    """Runs the helper while a display is connected and forwards its events to the displays."""
+
+    def __init__(self):
+        self.proc = None
+        self.args = None
+        self.binary = None
+        self.failed_at = 0.0
+
+    def wanted_args(self):
+        st = pointer_settings()
+        if not st.get("enabled"):
+            return None
+        dev = next((l.info for l in HUB.links if l.info and l.kind == "serial"), None) or \
+            next((l.info for l in HUB.links if l.info), None)
+        if not dev:
+            return None
+        return ["--w", str(dev.get("w") or 240), "--h", str(dev.get("h") or 320),
+                "--start", str(st["start"]), "--length", str(st["length"]), "--speed", str(st["speed"])]
+
+    def run(self, stop):
+        while not stop.wait(2):
+            try:
+                self.step()
+            except Exception as e:
+                log("pointer:", e)
+        self.stop_helper()
+
+    def step(self):
+        args = self.wanted_args()
+        running = self.proc is not None and self.proc.poll() is None
+        if running and args != self.args:
+            self.stop_helper()
+            running = False
+        if args and not running:
+            if time.time() - self.failed_at < 30:
+                return
+            if self.binary is None:
+                self.binary = pointer_binary() or ""
+            if not self.binary:
+                self.failed_at = time.time()
+                return
+            self.proc = subprocess.Popen([self.binary] + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL, text=True, bufsize=1)
+            self.args = args
+            threading.Thread(target=self.reader, args=(self.proc,), daemon=True).start()
+            dbg("pointer: helper started", " ".join(args))
+
+    def reader(self, proc):
+        for line in proc.stdout:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            t = ev.get("t")
+            if t == "m":
+                HUB.broadcast({"t": "m", "on": 1, "x": ev.get("x", 0), "y": ev.get("y", 0), "b": ev.get("b", 0)})
+            elif t == "ms":
+                HUB.broadcast({"t": "ms", "dy": ev.get("dy", 0)})
+            elif t == "rb":
+                HUB.broadcast({"t": "mb"})
+            elif t == "leave":
+                HUB.broadcast({"t": "m", "on": 0})
+            elif t == "enter":
+                dbg("pointer: mouse moved onto the display")
+        if proc.poll() not in (None, 0):
+            self.failed_at = time.time()
+
+    def stop_helper(self):
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.proc.stdin.close()  # the helper gives the mouse back and exits
+                self.proc.wait(timeout=3)
+            except Exception:
+                self.proc.kill()
+        self.proc = None
+        self.args = None
+
+
 # ---------------------------------------------------------------- housekeeping
 
 def sweeper(stop, done_to_idle_min):
@@ -1234,6 +1360,8 @@ def cmd_serve(a):
         threading.Thread(target=serial_manager, args=(a.port, a.baud, stop), daemon=True).start()
     if a.sim_port:
         threading.Thread(target=sim_server, args=(a.sim_port, stop), daemon=True).start()
+    if sys.platform == "darwin":
+        threading.Thread(target=PointerManager().run, args=(stop,), daemon=True).start()
     log(f"AgentTally bridge {VERSION} - http://127.0.0.1:{a.http_port}  sim tcp:{a.sim_port or 'off'}")
 
     def bye(*_):
@@ -1457,6 +1585,9 @@ def cmd_install(a):
     target = install_dir_script()
     if me != target:
         shutil.copy2(me, target)
+        swift = os.path.join(os.path.dirname(me), "pointer.swift")
+        if os.path.exists(swift):
+            shutil.copy2(swift, os.path.join(HOME, "pointer.swift"))
     os.chmod(target, 0o755)
     # `agenttally` on the PATH for convenience
     bindir = os.path.expanduser("~/.local/bin")
@@ -1493,6 +1624,23 @@ def cmd_service(a):
     else:
         sys.exit("no service manager found")
     print(f"bridge service: {a.action}")
+
+
+def cmd_pointer(a):
+    """Turn the mouse-on-the-display feature on/off or tune where it starts."""
+    cfg = load_config()
+    p = dict(POINTER_DEFAULTS, **(cfg.get("pointer") or {}))
+    if a.action in ("on", "off"):
+        p["enabled"] = a.action == "on"
+    for k in ("start", "length", "speed"):
+        v = getattr(a, k)
+        if v is not None:
+            p[k] = v
+    if a.action != "status" or any(getattr(a, k) is not None for k in ("start", "length", "speed")):
+        cfg["pointer"] = p
+        save_config(cfg)
+    print(f"mouse on the display: {'on' if p['enabled'] else 'off'}  "
+          f"(bottom edge of the main screen from {p['start']:.0%}, {p['length']:.0%} wide, speed {p['speed']})")
 
 
 def cmd_uninstall(a):
@@ -1549,6 +1697,13 @@ def main():
     s.set_defaults(fn=cmd_install)
 
     sub.add_parser("uninstall", help="remove hooks + autostart").set_defaults(fn=cmd_uninstall)
+
+    s = sub.add_parser("pointer", help="move the Mac mouse onto the display through the screen edge")
+    s.add_argument("action", choices=["on", "off", "status"])
+    s.add_argument("--start", type=float, help="where the edge zone starts, 0..1 of the screen width")
+    s.add_argument("--length", type=float, help="how wide the edge zone is, 0..1 of the screen width")
+    s.add_argument("--speed", type=float, help="mouse speed on the display")
+    s.set_defaults(fn=cmd_pointer)
 
     s = sub.add_parser("service", help="start/stop the autostart bridge (stop it before flashing)")
     s.add_argument("action", choices=["start", "stop", "restart"])
