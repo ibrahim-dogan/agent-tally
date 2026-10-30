@@ -50,7 +50,8 @@ jobs:
             enclosure/stl/*.stl
 
   pages:
-    if: github.ref == 'refs/heads/main'
+    # GitHub Pages needs a public repository on free plans
+    if: github.ref == 'refs/heads/main' && !github.event.repository.private
     needs: build
     runs-on: ubuntu-latest
     environment:
