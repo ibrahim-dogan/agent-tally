@@ -7,13 +7,16 @@ serial. A desktop simulator can attach over TCP and behaves like a device.
 
 Standard library only. Works on macOS and Linux; on Windows install pyserial.
 
-  agenttally.py serve            run the bridge (foreground)
-  agenttally.py install          add Claude Code hooks + autostart service
-  agenttally.py uninstall        remove both again
-  agenttally.py status           show sessions known to the running bridge
-  agenttally.py send ...         push a generic event (for scripts/other agents)
-  agenttally.py demo             fill the bridge with fake sessions
-  agenttally.py device KEY=VAL   change a device setting (brightness=, invert=...)
+  agenttally serve            run the bridge (foreground)
+  agenttally install          add Claude Code hooks + autostart service
+  agenttally uninstall        remove both again
+  agenttally service start|stop|restart
+  agenttally status           show sessions known to the running bridge
+  agenttally send ...         push a generic event (for scripts/other agents)
+  agenttally demo             fill the bridge with fake sessions
+  agenttally demo-mode on|off hide real sessions and play a scripted loop (recordings)
+  agenttally pointer on|off|status   mouse onto the display (macOS)
+  agenttally device KEY=VAL   change a device setting (brightness=, invert=...)
 """
 
 import argparse
@@ -52,6 +55,15 @@ STATE_RANK = {"waiting": 0, "done": 1, "working": 2, "idle": 3}
 
 log_lock = threading.Lock()
 VERBOSE = False
+
+
+def private_home():
+    """~/.agent-tally holds prompts and replies (state, log): keep it to this user."""
+    os.makedirs(HOME, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(HOME, 0o700)
+    except OSError:
+        pass
 
 
 def log(*a):
@@ -165,9 +177,9 @@ class Store:
                 return
             self.dirty_save = False
             data = {"sessions": list(self.sessions.values())}
-        os.makedirs(HOME, exist_ok=True)
+        private_home()
         tmp = STATE_FILE + ".tmp"
-        with open(tmp, "w") as f:
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
             json.dump(data, f)
         os.replace(tmp, STATE_FILE)
 
@@ -187,6 +199,9 @@ class Store:
     def upsert(self, sid, quiet=False, **fields):
         """quiet=True: bookkeeping change that should not count as activity."""
         now = time.time()
+        for k in ("name", "cwd", "detail", "prompt", "reply", "transcript", "src"):
+            if fields.get(k) is not None and not isinstance(fields[k], str):
+                fields[k] = str(fields[k])  # the API takes anything; the display needs text
         with self.lock:
             s = self.sessions.get(sid)
             created = s is None
@@ -264,7 +279,7 @@ def pid_is_agent(pid):
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        return False  # another user's process is never our agent
     try:
         out = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True,
                              timeout=2).stdout.lower()
@@ -630,6 +645,8 @@ end tell
 
 def open_attach_tab(session_id):
     """Open a new terminal tab that attaches to a background session."""
+    if not re.fullmatch(r"[0-9A-Za-z_-]{1,64}", session_id or ""):
+        return False, "bad session id"  # it is typed into a terminal: never pass anything else
     cmd = f"claude attach {session_id}"
     iterm = subprocess.run(["osascript", "-e", 'id of application "iTerm"'], capture_output=True, text=True).returncode == 0
     script = (ITERM_NEW_TAB if iterm else TERMINAL_NEW_TAB) % cmd
@@ -666,6 +683,8 @@ def focus_session(sid):
             res = focus_tty(tab, "/Applications/iTerm.app")
             if res:
                 return res
+        if s.get("src") != "claude":
+            return False, "not a Claude session"
         return open_attach_tab(raw_id)
     if not bundle:
         return False, "no app"
@@ -728,8 +747,21 @@ class DeviceLink:
                 self.send(wire_session(s))
 
     def on_line(self, line):
+        if not self.alive:
+            return
         self.last_rx = time.time()
         line = line.strip()
+        if self.kind == "sim" and not self.info:
+            # A simulator says hello first. Anything else is a browser or another program
+            # poking the TCP port: drop it before it can speak the device protocol.
+            try:
+                first = json.loads(line)
+                ok = isinstance(first, dict) and first.get("t") == "hello"
+            except ValueError:
+                ok = False
+            if not ok:
+                self.alive = False
+                return
         dbg(f"[{self.name}] << {line[:120]}")
         if not line.startswith("{"):
             if line:
@@ -1190,7 +1222,7 @@ def pointer_binary():
     """Path of the compiled helper, building it when the source is newer. None if unavailable."""
     if sys.platform != "darwin":
         return None
-    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pointer.swift")
+    src = os.path.join(os.path.dirname(os.path.realpath(__file__)), "pointer.swift")
     out = os.path.join(HOME, "agenttally-pointer")
     if not os.path.exists(src):
         return out if os.path.exists(out) else None
@@ -1371,8 +1403,10 @@ class Api(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_OPTIONS(self):
+        host = (self.headers.get("Host") or "").lower()
+        port = self.server.server_address[1]
         origin = self.headers.get("Origin")
-        if not origin_allowed(origin):
+        if not origin_allowed(origin) or host not in (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"):
             self.send_response(403)
             self.end_headers()
             return
@@ -1384,12 +1418,28 @@ class Api(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "600")
         self.end_headers()
 
+    def _guard(self):
+        """Refuse requests that reach us under another host name (DNS rebinding) or that a
+        browser sends for a page which is not the web flasher."""
+        host = (self.headers.get("Host") or "").lower()
+        port = self.server.server_address[1]
+        if host not in (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"):
+            self._json(403, {"error": "bad host"})
+            return False
+        origin = self.headers.get("Origin")
+        if origin and not origin_allowed(origin):
+            self._json(403, {"error": "origin not allowed"})
+            return False
+        return True
+
     def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
+        n = max(0, int(self.headers.get("Content-Length") or 0))
         raw = self.rfile.read(min(n, 2_000_000)) if n else b""
         return json.loads(raw or b"{}")
 
     def do_GET(self):
+        if not self._guard():
+            return
         if self.path in ("/", "/index.html"):
             body = DASHBOARD.encode()
             self.send_response(200)
@@ -1413,9 +1463,8 @@ class Api(BaseHTTPRequestHandler):
         # which only the web flasher's origins pass. Blocks drive-by requests from other sites.
         if not (self.headers.get("Content-Type") or "").startswith("application/json"):
             return self._json(415, {"error": "Content-Type must be application/json"})
-        origin = self.headers.get("Origin")
-        if origin and not origin_allowed(origin):
-            return self._json(403, {"error": "origin not allowed"})
+        if not self._guard():
+            return
         try:
             data = self._body()
             if self.path.startswith("/hook/claude"):
@@ -1452,7 +1501,7 @@ class Api(BaseHTTPRequestHandler):
 def cmd_serve(a):
     global VERBOSE
     VERBOSE = a.verbose
-    os.makedirs(HOME, exist_ok=True)
+    private_home()
     STORE.load()
     for s in STORE.snapshot():  # leftovers of a demo that was running when the bridge stopped
         if s.get("demo"):
@@ -1497,7 +1546,7 @@ def cmd_status(a):
     try:
         j = api("/api/sessions", port=a.http_port)
     except Exception:
-        sys.exit("bridge not running (start it with: agenttally.py serve)")
+        sys.exit("bridge not running (start it with: agenttally serve)")
     devs = j.get("devices") or []
     print("devices:", ", ".join(f"{d.get('board')} fw{d.get('fw')}" for d in devs) or "none")
     for s in sorted(j["sessions"], key=lambda s: (STATE_RANK[s["state"]], -s["since"])):
@@ -1558,7 +1607,7 @@ DEMO = [
 def cmd_demo(a):
     for ev in DEMO:
         api("/api/event", ev, port=a.http_port)
-    print(f"sent {len(DEMO)} demo sessions; remove with: agenttally.py demo --clear")
+    print(f"sent {len(DEMO)} demo sessions; remove with: agenttally demo --clear")
 
 
 def cmd_demo_clear(a):
@@ -1594,7 +1643,7 @@ def load_settings():
 
 
 def write_settings(data):
-    p = settings_path()
+    p = os.path.realpath(settings_path())  # keep a symlinked settings file a symlink
     os.makedirs(os.path.dirname(p), exist_ok=True)
     if os.path.exists(p):
         bak = f"{p}.agent-tally-{time.strftime('%Y%m%d-%H%M%S')}.bak"
@@ -1604,7 +1653,14 @@ def write_settings(data):
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
+    if os.path.exists(p):
+        shutil.copymode(p, tmp)
     os.replace(tmp, p)
+
+
+def is_our_hook(cmd):
+    """Only the commands this installer wrote, not any hook that mentions the name."""
+    return f"?src={HOOK_MARK} " in cmd or cmd.rstrip().endswith(f"# {HOOK_MARK}")
 
 
 def strip_our_hooks(settings):
@@ -1612,7 +1668,7 @@ def strip_our_hooks(settings):
     for ev in list(hooks):
         groups = []
         for g in hooks[ev]:
-            hs = [h for h in g.get("hooks", []) if HOOK_MARK not in str(h.get("command", ""))]
+            hs = [h for h in g.get("hooks", []) if not is_our_hook(str(h.get("command", "")))]
             if hs:
                 groups.append(dict(g, hooks=hs))
         if groups:
@@ -1723,7 +1779,7 @@ def cmd_service(a):
     if sys.platform == "darwin":
         plist = os.path.expanduser(f"~/Library/LaunchAgents/{LAUNCHD_LABEL}.plist")
         if not os.path.exists(plist):
-            sys.exit("service not installed (run: agenttally.py install)")
+            sys.exit("service not installed (run: agenttally install)")
         if a.action in ("stop", "restart"):
             subprocess.run(["launchctl", "unload", plist], capture_output=True)
         if a.action in ("start", "restart"):

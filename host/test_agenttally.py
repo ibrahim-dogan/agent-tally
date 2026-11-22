@@ -137,7 +137,7 @@ class BridgeTest(unittest.TestCase):
         at.STORE.upsert("claude:pre", state="working", name="before")
         c = socket.create_connection(("127.0.0.1", self.sim_port))
         c.settimeout(3)
-        c.sendall(b'boot noise\n{"t":"hello","v":1,"fw":"test","board":"sim","w":240,"h":320}\n')
+        c.sendall(b'{"t":"hello","v":1,"fw":"test","board":"sim","w":240,"h":320}\n')
         f = c.makefile("r")
 
         def read():  # skip the settings query the bridge sends after each hello
@@ -179,6 +179,39 @@ class BridgeTest(unittest.TestCase):
         with urllib.request.urlopen(pre) as r:
             self.assertEqual(r.headers["Access-Control-Allow-Private-Network"], "true")
 
+    def test_other_host_names_and_origins_cannot_read(self):
+        def get(headers):
+            req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/sessions", headers=headers)
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                return e.code
+        self.assertEqual(get({}), 200)
+        self.assertEqual(get({"Host": f"evil.example:{self.port}"}), 403)  # DNS rebinding
+        self.assertEqual(get({"Origin": "https://evil.example"}), 403)
+
+    def test_simulator_port_ignores_http(self):
+        before = len(at.HUB.links)
+        c = socket.create_connection(("127.0.0.1", self.sim_port))
+        c.sendall(b'POST / HTTP/1.1\r\nHost: x\r\n\r\n{"t":"hello","v":1,"fw":"evil","board":"sim","w":240,"h":320}\n'
+                  b'{"t":"focus","id":"claude:abc"}\n')
+        time.sleep(0.4)
+        self.assertFalse([l for l in at.HUB.links if l.info.get("fw") == "evil"])
+        c.close()
+        time.sleep(0.2)
+        self.assertLessEqual(len(at.HUB.links), before)
+
+    def test_untrusted_fields(self):
+        self.assertEqual(at.open_attach_tab('a; touch /tmp/x #" & (do shell script "id") & "'), (False, "bad session id"))
+        self.assertTrue(at.is_our_hook(at.hook_command(47321)))
+        self.assertFalse(at.is_our_hook("~/code/agent-tally-fork/my-guard.sh"))
+        at.STORE.upsert("x:typed", state="working", name=5, detail=["a"])
+        try:
+            json.dumps(at.wire_session(at.STORE.get("x:typed")))
+        finally:
+            at.STORE.remove("x:typed")
+
     def test_serial_release_for_the_web_flasher(self):
         self.assertEqual(self.post("/api/serial/release", b'{"seconds": 30}')[0], 200)
         self.assertTrue(at.serial_paused())
@@ -213,6 +246,8 @@ class BridgeTest(unittest.TestCase):
         c.settimeout(3)
         c.sendall(b'{"t":"hello","v":1,"fw":"t","board":"sim","w":240,"h":320}\n')
         f = c.makefile("r")
+        while json.loads(f.readline()).get("t") != "hi":  # wait until the bridge registered the link
+            pass
         at.DEMO_MODE.set(True, "studio")
         try:
             seen, deadline = [], time.time() + 2.5
@@ -222,7 +257,8 @@ class BridgeTest(unittest.TestCase):
                 except (socket.timeout, ValueError):
                     break
                 seen.append(m)
-                if m.get("t") == "s" and m["id"] == "demo:a":
+                if (any(x.get("t") == "s" and x["id"] == "demo:a" for x in seen)
+                        and any(x.get("host") == "studio" for x in seen)):
                     break
             names = [m.get("name") for m in seen if m.get("t") == "s"]
             hosts = [m.get("host") for m in seen if m.get("t") == "hi"]

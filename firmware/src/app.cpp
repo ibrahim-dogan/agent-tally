@@ -907,7 +907,7 @@ void App::drawEmpty() {
     p_.textCenter(fSmall_, cx, y + fSmall_->height + 2, "and it shows up here.", cMuted_);
   } else {
     p_.textCenter(fSmall_, cx, y, "Run on your computer:", cMuted_);
-    p_.textCenter(fSmall_, cx, y + fSmall_->height + S(4), "agenttally.py serve", cAccent_);
+    p_.textCenter(fSmall_, cx, y + fSmall_->height + S(4), "agenttally serve", cAccent_);
   }
 }
 
