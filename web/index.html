@@ -132,7 +132,7 @@ footer { padding: 36px 0 60px; color: var(--dim); font-size: 14px; border-top: 1
   <div class="hero">
     <div>
       <h1>Know when your agents <em>need you.</em></h1>
-      <p class="lead">AgentTally turns a $15 ESP32 "Cheap Yellow Display" into a desk monitor for your AI coding sessions. Every Claude Code session shows up live: working, waiting for your approval, or done.</p>
+      <p class="lead">AgentTally turns a ~$15 ESP32 "Cheap Yellow Display" into a desk monitor for your AI coding sessions. Every Claude Code session shows up live: working, waiting for your approval, or done. USB only, no Wi-Fi, nothing leaves your computer.</p>
       <div class="pills">
         <span class="pill"><i class="dot" style="background:var(--wait)"></i>Needs you</span>
         <span class="pill"><i class="dot" style="background:var(--done)"></i>Done</span>
@@ -153,15 +153,15 @@ footer { padding: 36px 0 60px; color: var(--dim); font-size: 14px; border-top: 1
 
   <section id="flash">
     <h2><span class="n">01</span>Flash the firmware</h2>
-    <p class="sub">Plug the board in with a USB data cable, pick your model and press Install. Works in Chrome or Edge on desktop.</p>
+    <p class="sub">Plug the board in with a USB data cable, pick your model and press Install. Works in Chrome or Edge on desktop. Only the 2.8" dual-USB board has been tested on real hardware; the other images build but are untested, and reports are welcome.</p>
     <div class="boards" id="boards">
-      <label class="board"><input type="radio" name="board" value="cyd28" checked><b>2.8" ESP32-2432S028R</b><span>Micro-USB and dual USB (micro + USB-C). Panel detected automatically.</span><i class="tag ok">tested</i></label>
-      <label class="board"><input type="radio" name="board" value="cyd35r"><b>3.5" ESP32-3248S035R</b><span>ST7796, resistive touch</span><i class="tag exp">experimental</i></label>
-      <label class="board"><input type="radio" name="board" value="cyd35c"><b>3.5" ESP32-3248S035C</b><span>ST7796, capacitive GT911</span><i class="tag exp">experimental</i></label>
-      <label class="board"><input type="radio" name="board" value="cyd32r"><b>3.2" ESP32-2432S032R</b><span>ST7789, resistive touch</span><i class="tag exp">experimental</i></label>
-      <label class="board"><input type="radio" name="board" value="cyd32c"><b>3.2" ESP32-2432S032C</b><span>ST7789, capacitive GT911</span><i class="tag exp">experimental</i></label>
-      <label class="board"><input type="radio" name="board" value="cyd24r"><b>2.4" ESP32-2432S024R</b><span>ILI9341, resistive touch</span><i class="tag exp">experimental</i></label>
-      <label class="board"><input type="radio" name="board" value="cyd24c"><b>2.4" ESP32-2432S024C</b><span>ILI9341, capacitive CST820</span><i class="tag exp">experimental</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd28" checked><b>2.8" ESP32-2432S028R</b><span>Micro-USB and dual USB (micro + USB-C). Panel detected automatically.</span><i class="tag ok">tested on the dual-USB board</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd35r"><b>3.5" ESP32-3248S035R</b><span>ST7796, resistive touch</span><i class="tag exp">builds, untested</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd35c"><b>3.5" ESP32-3248S035C</b><span>ST7796, capacitive GT911</span><i class="tag exp">builds, untested</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd32r"><b>3.2" ESP32-2432S032R</b><span>ST7789, resistive touch</span><i class="tag exp">builds, untested</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd32c"><b>3.2" ESP32-2432S032C</b><span>ST7789, capacitive GT911</span><i class="tag exp">builds, untested</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd24r"><b>2.4" ESP32-2432S024R</b><span>ILI9341, resistive touch</span><i class="tag exp">builds, untested</i></label>
+      <label class="board"><input type="radio" name="board" value="cyd24c"><b>2.4" ESP32-2432S024C</b><span>ILI9341, capacitive CST820</span><i class="tag exp">builds, untested</i></label>
     </div>
     <div class="install-row">
       <esp-web-install-button id="installer" manifest="manifest/cyd28.json">
@@ -177,20 +177,22 @@ footer { padding: 36px 0 60px; color: var(--dim); font-size: 14px; border-top: 1
 
   <section id="bridge">
     <h2><span class="n">02</span>Install the bridge</h2>
-    <p class="sub">A small Python script (standard library only) receives Claude Code hook events and mirrors your sessions to the display over the same USB cable. It also autostarts at login.</p>
+    <p class="sub">A small Python script (Python 3.8+, standard library only) receives Claude Code hook events and mirrors your sessions to the display over the same USB cable. It also autostarts at login. Tested on macOS; Linux is untested and there is no installer for Windows.</p>
     <div class="grid2">
       <div>
         <div class="code" id="cmd-install"><span class="c"># macOS / Linux</span>
 curl -fsSL https://raw.githubusercontent.com/ibrahim-dogan/agent-tally/main/host/install.sh | sh<button class="copy" data-copy="cmd-install">Copy</button></div>
-        <p class="note" style="margin-top:12px">Then restart your Claude Code sessions. Remove everything with <code>python3 ~/.agent-tally/agenttally.py uninstall</code>.</p>
+        <p class="note" style="margin-top:12px">Then restart your Claude Code sessions and check with <code>agenttally status</code>. Remove the hooks and the service with <code>agenttally uninstall</code>. If <code>~/.local/bin</code> is not on your PATH, run <code>python3 ~/.agent-tally/agenttally.py</code> instead of <code>agenttally</code>.</p>
       </div>
       <ol class="steps">
-        <li>Copies <b>agenttally.py</b> to <code>~/.agent-tally/</code></li>
+        <li>Copies <b>agenttally.py</b> to <code>~/.agent-tally/</code> and links it as <code>~/.local/bin/agenttally</code></li>
         <li>Adds hook entries to <b>~/.claude/settings.json</b> (a backup is saved next to it)</li>
         <li>Starts the bridge with <b>launchd</b> (macOS) or a <b>systemd</b> user unit (Linux)</li>
-        <li>Other agents can report too: <code>agenttally.py send --source codex --id run1 --state done</code></li>
+        <li>Other agents can report too: <code>agenttally send --source codex --id run1 --state done</code></li>
       </ol>
     </div>
+    <div class="callout"><b>What you get on the display.</b> When a session starts waiting for you or finishes, the edge of the screen pulses red or green three times and its card glows. Tap a session for details. At night (22:00 to 09:00, adjustable below) the screen and LED switch off; a touch shows the screen for 30 seconds.</div>
+    <div class="callout"><b>macOS extras.</b> The <b>Focus</b> button in a session's detail view brings its terminal tab to the front (exact tab in iTerm2 and Terminal, other apps are just brought forward). Push the mouse off the bottom-left edge of your main screen and it moves onto the display; switch that off with <code>agenttally pointer off</code>. More in the <a href="https://github.com/ibrahim-dogan/agent-tally#readme">README</a>.</div>
   </section>
 
   <section id="tools" class="offline">
@@ -248,7 +250,7 @@ curl -fsSL https://raw.githubusercontent.com/ibrahim-dogan/agent-tally/main/host
     <h2><span class="n">04</span>Print the stand</h2>
     <div class="stand">
       <div>
-        <p class="sub">A portrait stand that leans the screen back 15°, hides the USB plug and cable inside the foot and lets the cable out at the back. Five parts, no supports. A clear light pipe carries the status LED from the back of the board to a light bar on the bezel. Parametric OpenSCAD source included (tilt, plug room, fit).</p>
+        <p class="sub">A portrait stand that leans the screen back 15°, hides the USB plug and cable inside the foot and lets the cable out at the back. Five parts, no supports. Parametric OpenSCAD source included (tilt, plug room, fit). Tested with the 2.8" board. The light pipe that carries the rear status LED to a light bar on the bezel is experimental and the light is weak: the red or green frame on the screen is the alert to rely on.</p>
         <ol class="steps">
           <li>Print <b>front</b> face down, <b>back</b> outside down, <b>stand</b> upright with ≥30% infill, and the <b>plate</b>.</li>
           <li>Put the board in the front bezel, close it with the back cover and <b>4× M3×14</b> countersunk screws.</li>
@@ -260,16 +262,16 @@ curl -fsSL https://raw.githubusercontent.com/ibrahim-dogan/agent-tally/main/host
           <a href="stl/agenttally-cyd28-back.stl">back.stl <span>2.8"</span></a>
           <a href="stl/agenttally-cyd28-stand.stl">stand.stl <span>2.8"</span></a>
           <a href="stl/agenttally-cyd28-plate.stl">plate.stl <span>2.8"</span></a>
-          <a href="stl/agenttally-cyd28-light_pipe.stl">light_pipe.stl <span>clear PETG</span></a>
+          <a href="stl/agenttally-cyd28-light_pipe.stl">light_pipe.stl <span>clear PETG, experimental</span></a>
         </div>
-        <p class="note">3.5" files and the .scad source are in the <a href="https://github.com/ibrahim-dogan/agent-tally/tree/main/enclosure">repository</a>.</p>
+        <p class="note">The .scad source and 3.5" files are in the <a href="https://github.com/ibrahim-dogan/agent-tally/tree/main/enclosure">repository</a>. The 3.5" stand uses estimated dimensions and is untested.</p>
       </div>
       <img src="img/assembly.png" alt="Rendered stand with the display leaning back" loading="lazy">
     </div>
   </section>
 
   <footer>
-    <div>AgentTally · firmware and bridge MIT, enclosure CC BY 4.0 · Not affiliated with Anthropic or Sunton.</div>
+    <div>AgentTally · firmware, bridge and this page MIT, enclosure CC BY 4.0 · <a href="https://github.com/ibrahim-dogan/agent-tally/issues">Report a problem</a> · Not affiliated with Anthropic or Sunton.</div>
   </footer>
 </div>
 
