@@ -39,7 +39,7 @@ This is a first release, built and used on one setup.
 | **Tested** | The 2.8" dual-USB board ("CYD2USB", ESP32-2432S028R with an ST7789 panel), its 2.8" stand, Claude Code on macOS with the bridge running under launchd. |
 | **Untested, best effort** | All other boards (their firmware builds in CI but is untested on hardware), the 3.5" stand (estimated dimensions), the bridge on Linux (systemd user unit) and Windows (no installer or autostart; run `serve` yourself with `pyserial` installed), the Codex CLI integration. |
 | **macOS only** | The Focus button, the mouse on the display, and the launchd service. |
-| **Experimental** | The printed light pipe that carries the rear LED to the front of the stand. It works, but the light is weak. Rely on the red/green frame on the screen. |
+| **Experimental** | A light pipe that carries the rear LED to the front of the stand (separate bezel and rear cover with a slot, see [enclosure/README.md](enclosure/README.md)). It works, but the light is weak. Rely on the red/green frame on the screen. |
 
 Reports from other boards and systems are welcome, see [Contributing](#contributing).
 

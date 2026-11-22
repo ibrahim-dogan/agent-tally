@@ -4,16 +4,17 @@
     python3 enclosure/bambu/make_3mf.py [--studio /path/to/BambuStudio.app] [--bed "Textured PEI Plate"]
 
 Writes enclosure/print/:
-  agenttally-a1mini.3mf     three plates, PLA, 0.2 mm, no supports
-                              1  Body: front + back + bottom plate + light pipe   filament 1 (dark)
-                              2  Stand, 2 colours: letters inlaid (AMS)           filament 2 (white) + 1
-                              3  Stand, 1 colour                                  filament 1
-                            The light pipe on plate 1 is printed in the body colour: it only
-                            plugs the slot in the bezel. Use the PETG one if you want it to glow.
-  agenttally-lightpipe.3mf  two light pipes, clear PETG, 0.12 mm, 100% infill (experimental)
+  agenttally-a1mini.3mf     four plates, PLA, 0.2 mm, no supports
+                              1  Body: front + back + bottom plate              filament 1 (dark)
+                              2  Stand, 2 colours: letters inlaid (AMS)         filament 2 (white) + 1
+                              3  Stand, 1 colour, engraved name                 filament 1
+                              4  Stand, 1 colour, no lettering                  filament 1
+  agenttally-experimental-lightpipe-body.3mf   body with the light pipe slot (PLA)
+  agenttally-experimental-lightpipe.3mf        two light pipes, clear PETG, 0.12 mm, 100% infill
 
-Print plate 1 and either plate 2 or plate 3. Filament slots are only colour hints: Bambu Studio
-maps them to your AMS or spool when you send the job.
+Print plate 1 and one of plates 2-4. The light pipe is experimental (the light is dim): the
+default bezel has no slot for it. Filament slots are only colour hints: Bambu Studio maps them
+to your AMS or spool when you send the job.
 
 How it works, and why:
 - The printer, process and filament presets are the unmodified system presets (flattened along
@@ -54,7 +55,8 @@ PIPE = {"wall_loops": "4", "sparse_infill_density": "100%", "sparse_infill_patte
 
 # Object names shown in Bambu Studio
 NAMES = {"front.stl": "Front bezel", "back.stl": "Rear cover", "plate.stl": "Bottom plate", "stand.stl": "Stand",
-         "light_pipe.stl": "Light pipe (optional)"}
+         "stand-plain.stl": "Stand, no lettering", "front-lightpipe.stl": "Front bezel, light pipe slot",
+         "back-lightpipe.stl": "Rear cover, light pipe pins", "light_pipe.stl": "Light pipe"}
 
 # Per-filament options that are missing from the filament presets, so the CLI leaves them at one
 # entry however many filaments are loaded.
@@ -168,7 +170,7 @@ def build(st, name, process, filaments, colours, purge, plates, bed):
         for stl, filament, group, kv in parts:
             if group not in groups:  # the first part of a group decides the object's name, filament and settings
                 groups.add(group)
-                settings.append({"name": NAMES[stl.split("-")[-1]], "extruder": str(filament), **kv})
+                settings.append({"name": NAMES[stl.split("cyd28-", 1)[-1]], "extruder": str(filament), **kv})
             objs.append({"path": s(stl), "count": 1, "filaments": [filament], "assemble_index": [group],
                          "pos_x": [90], "pos_y": [90], "pos_z": [0], "subtype": "normal_part"})
         spec.append({"plate_name": plate_name, "need_arrange": True, "objects": objs})
@@ -200,12 +202,17 @@ def main():
         # for a plate whose only filament is not number 1.
         build(st, "agenttally-a1mini", "0.20mm Standard @BBL A1M", [PLA, PLA], [DARK, WHITE],
               [[0, PURGE_DARK_TO_WHITE], [PURGE_WHITE_TO_DARK, 0]],
-              [("Body", [(p + "front.stl", 1, 1, BODY), (p + "back.stl", 1, 2, BODY), (p + "plate.stl", 1, 3, BODY),
-                         (p + "light_pipe.stl", 1, 4, {})]),
+              [("Body", [(p + "front.stl", 1, 1, BODY), (p + "back.stl", 1, 2, BODY), (p + "plate.stl", 1, 3, BODY)]),
                ("Stand, 2 colours (AMS)", [(p + "stand.stl", 2, 1, STAND), (p + "stand_text.stl", 1, 1, STAND)]),
-               ("Stand, 1 colour", [(p + "stand.stl", 1, 1, STAND)])],
+               ("Stand, 1 colour, engraved name", [(p + "stand.stl", 1, 1, STAND)]),
+               ("Stand, 1 colour, no lettering", [(p + "stand-plain.stl", 1, 1, STAND)])],
               a.bed)
-        build(st, "agenttally-lightpipe", "0.12mm Fine @BBL A1M", [PETG], [CLEAR], None,
+        # experimental: bezel and cover with the light pipe slot, and the pipes in clear PETG
+        build(st, "agenttally-experimental-lightpipe-body", "0.20mm Standard @BBL A1M", [PLA], [DARK], None,
+              [("Body with light pipe slot (experimental)",
+                [(p + "front-lightpipe.stl", 1, 1, BODY), (p + "back-lightpipe.stl", 1, 2, BODY), (p + "plate.stl", 1, 3, BODY)])],
+              a.bed)
+        build(st, "agenttally-experimental-lightpipe", "0.12mm Fine @BBL A1M", [PETG], [CLEAR], None,
               [("Light pipes, clear PETG", [(p + "light_pipe.stl", 1, 1, PIPE), (p + "light_pipe.stl", 1, 2, PIPE)])],
               a.bed)
 

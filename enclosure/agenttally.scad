@@ -25,12 +25,13 @@ tilt = 15;          // degrees the screen leans back
 plug_room = 34;     // straight room below the board for the USB plug + bend (use ~16 with a 90-degree cable)
 foot_depth = 80;    // front-to-back footprint of the foot
 socket_depth = 12;  // how deep the body sits in the socket
-label = "agent tally";  // text on the front of the stand
+label = "agent tally";  // text on the front of the stand; "" for a plain stand
 
 /* [Status light] */
 // Light pipe that carries the RGB LED on the back of the board to a light bar
-// on the right edge of the bezel. Experimental: printed in translucent PETG it is dim.
-light_pipe = true;
+// on the right edge of the bezel. Experimental and off by default: printed in translucent
+// PETG the light is dim. true adds the bezel slot and the rear-cover pins for it.
+light_pipe = false;
 led_xy = [11.6, 54.8];  // LED centre in board coordinates (front view, USB down), measured on a dual-USB board
 led_h = 1.6;            // LED height above the PCB back
 bar_len = 12;           // visible light bar length on the bezel
@@ -312,7 +313,7 @@ module stand() {
 }
 
 module stand_text_volume() {
-  translate([0, 0, plug_room * 0.45]) rotate([90 - tilt, 0, 0])
+  if (label != "") translate([0, 0, plug_room * 0.45]) rotate([90 - tilt, 0, 0])
     translate([0, 0, -foot_front - plug_room * 0.45 * tan(tilt) - 0.6])
       linear_extrude(2) text(label, size = 4.2, font = "Liberation Sans:style=Bold", halign = "center", valign = "center");
 }
