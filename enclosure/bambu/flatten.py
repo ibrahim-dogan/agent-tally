@@ -30,14 +30,21 @@ def index(root):
 
 
 def resolve(data, idx, depth=0):
+    """Merge a preset with its parents ("inherits") and its templates ("include").
+
+    Bambu Studio keeps the printers' start, end and filament change G-code in separate template
+    presets that the printer preset includes. Without them the result silently falls back to the
+    short generic G-code of the common base preset.
+    """
     parent = data.get("inherits")
-    if not parent:
-        return dict(data)
-    if parent not in idx or depth > 20:
+    if parent and (parent not in idx or depth > 20):
         sys.exit(f"cannot resolve parent preset: {parent}")
-    flat = resolve(idx[parent], idx, depth + 1)
-    flat.update({k: v for k, v in data.items() if k != "inherits"})
-    flat.pop("inherits", None)
+    flat = resolve(idx[parent], idx, depth + 1) if parent else {}
+    for name in data.get("include") or []:
+        if name not in idx:
+            sys.exit(f"cannot resolve included preset: {name}")
+        flat.update({k: v for k, v in idx[name].items() if k not in ("name", "type", "instantiation")})
+    flat.update({k: v for k, v in data.items() if k not in ("inherits", "include")})
     return flat
 
 

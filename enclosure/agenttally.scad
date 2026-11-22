@@ -16,7 +16,7 @@
 // display towards +z, components on the back towards -z.
 
 /* [Render] */
-part = "assembly"; // [assembly, body, section, stand_text, light_section, front, back, stand, plate, light_pipe, print_all]
+part = "assembly"; // [assembly, exploded, body, section, light_section, front, back, stand, stand_text, plate, light_pipe, light_pipe_beside, print_all]
 board = "cyd28";   // [cyd28, cyd35]
 show_board = true;
 
@@ -29,7 +29,7 @@ label = "agent tally";  // text on the front of the stand
 
 /* [Status light] */
 // Light pipe that carries the RGB LED on the back of the board to a light bar
-// on the right edge of the bezel. Print it in clear PETG or white PLA.
+// on the right edge of the bezel. Experimental: printed in translucent PETG it is dim.
 light_pipe = true;
 led_xy = [11.6, 54.8];  // LED centre in board coordinates (front view, USB down), measured on a dual-USB board
 led_h = 1.6;            // LED height above the PCB back
@@ -352,9 +352,13 @@ module board_model() {
 }
 
 // ---------------------------------------------------------------- output
+// preview colours: the tested print is a black body on a white stand with dark letters
+c_body = [0.17, 0.17, 0.19];
+c_stand = [0.95, 0.95, 0.93];
+
 module body_assembly(explode = 0) {
-  color([0.93, 0.92, 0.89]) translate([0, 0, explode]) front();
-  color([0.82, 0.81, 0.78]) translate([0, 0, -explode]) back();
+  color(c_body) translate([0, 0, explode]) front();
+  color(c_body * 1.25) translate([0, 0, -explode]) back();
   if (has_lp) color([1, 0.45, 0.1, 0.85]) light_pipe_body();
   if (show_board) board_model();
 }
@@ -385,21 +389,27 @@ else if (part == "light_section") {
   }
 }
 else if (part == "print_all") {
-  rotate([180, 0, 0]) translate([0, 0, -z_front]) front();
-  translate([body_w + 8, 0, -z_back]) back();
-  translate([-foot_w / 2 - 10, -foot_front, 0]) stand();
-  translate([-foot_w * 2 - 30, 0, 0]) plate();
+  // every part as it lies on the bed (preview image only, the STLs are exported one by one)
+  color(c_body * 1.6) translate([0, out_y0 + out_y1, 0]) rotate([180, 0, 0]) translate([0, 0, -z_front]) front();
+  color(c_body * 1.9) translate([body_w + 8, 0, -z_back]) back();
+  translate([-foot_w / 2 - 10, -foot_front, 0]) {
+    color(c_stand) stand();
+    color(c_body) render() stand_text();
+  }
+  color(c_body * 1.6) translate([-foot_w * 2 - 30, 0, 0]) plate();
+  if (has_lp) color([1, 0.45, 0.1, 0.9]) translate([2 * body_w + 14, 20, 0]) rotate([90, 0, 0]) translate([0, -ly0, 0]) light_pipe_body();
 } else if (part == "section") {
   // cut through the USB slot to check the cable path
   intersection() {
     union() {
-      color([0.86, 0.85, 0.82]) stand();
+      color(c_stand) stand();
       place_body() body_assembly();
     }
     translate([-100, -100, -1]) cube([100 + usb[0] - (out_x0 + out_x1) / 2, 300, 300]);
   }
 } else {
-  color([0.86, 0.85, 0.82]) stand();
+  color(c_stand) stand();
+  color(c_body) render() stand_text();
   place_body() body_assembly();
   color([0.6, 0.6, 0.62]) translate([-(foot_w - 4 - 0.4) / 2, foot_front + 2.2, 0]) plate();
 }
